@@ -1,0 +1,7 @@
+# Optional neural stack (Milestone 4). Installed only on request; weights downloaded only after consent.
+# torch with MPS on Apple Silicon; versions to be pinned after the on-Mac spike.
+torch
+torchaudio
+huggingface_hub
+demucs
+torchfcpe==0.0.4

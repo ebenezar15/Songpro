@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+frontend/dist/
+.venv/
+models/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+.DS_Store
+src-tauri/target/
