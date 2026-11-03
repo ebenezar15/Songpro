@@ -1,10 +1,10 @@
 """Synthetic songs for separation tests: a centre-panned vocal over a repeating stereo band."""
 import numpy as np
 
-from vocalforge.engines import FormantSingerEngine
-from vocalforge.lyrics import align_to_notes, parse_lyrics
-from vocalforge.planner import build_plan
-from vocalforge.voices import voice_params
+from kuralkoodu.engines import FormantSingerEngine
+from kuralkoodu.lyrics import align_to_notes, parse_lyrics
+from kuralkoodu.planner import build_plan
+from kuralkoodu.voices import voice_params
 
 
 def band(seconds, sr=44100, bpm=100, seed=0):
@@ -56,7 +56,7 @@ def vocal(seconds, sr_out=44100, bpm=100, seed=0):
     notes, _ = align_to_notes(notes, syl)
     plan = build_plan({"notes": notes, "tuning": "natural"}, voice_params("female", "young_adult"), seed=seed, tail=0.0)
     y, sr = FormantSingerEngine().render(plan, seed)
-    from vocalforge.audio_io import resample
+    from kuralkoodu.audio_io import resample
     y = resample(y, sr, sr_out)
     n = int(seconds * sr_out)
     y = np.pad(y, (0, max(0, n - len(y))))[:n]

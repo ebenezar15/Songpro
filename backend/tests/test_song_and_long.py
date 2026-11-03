@@ -8,8 +8,8 @@ from fastapi.testclient import TestClient
 
 from mixes import song
 from synth import hum
-from vocalforge.export import read_wav_header
-from vocalforge.server import app
+from kuralkoodu.export import read_wav_header
+from kuralkoodu.server import app
 
 c = TestClient(app)
 

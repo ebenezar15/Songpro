@@ -26,7 +26,7 @@ from .engines.base import Cancelled, EngineUnavailable
 from .engines.neural import consent_given
 
 METHODS = {
-    "builtin": {"name": "Quick (built-in)", "license_id": "vocalforge", "download_mb": 0,
+    "builtin": {"name": "Quick (built-in)", "license_id": "kuralkoodu", "download_mb": 0,
                 "notes": "Runs immediately. Expect some music bleed in dense mixes."},
     "demucs": {"name": "Studio (Demucs htdemucs)", "license_id": "demucs", "download_mb": 80,
                "notes": "Cleaner separation. Needs PyTorch and a one-time weight download."},

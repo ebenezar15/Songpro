@@ -43,7 +43,7 @@ def phase_vocoder_stretch(x, rate):
 class DspConvertEngine(VocalEngine):
     id = "dsp-convert"
     name = "Voice Character (DSP, keeps sung words)"
-    license_id = "vocalforge"
+    license_id = "kuralkoodu"
     languages = ("any (keeps the sung words)",)
     input_types = ("sung",)
     native_sr = 48000

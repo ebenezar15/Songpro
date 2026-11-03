@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from synth import hum
-from vocalforge.analysis import analyze
+from kuralkoodu.analysis import analyze
 
 MEL = [60, 62, 64, 65, 67, 65, 64, 62, 60, 64, 67, 72, 71, 67, 64, 62] * 2
 

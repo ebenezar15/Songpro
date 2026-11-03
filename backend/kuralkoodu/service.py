@@ -27,7 +27,7 @@ from .voices import analyse_reference, range_check, voice_params
 
 
 def home() -> Path:
-    p = Path(os.environ.get("VOCALFORGE_HOME", Path.home() / "VocalForge"))
+    p = Path(os.environ.get("KURALKOODU_HOME", Path.home() / "Kuralkoodu"))
     (p / "projects").mkdir(parents=True, exist_ok=True)
     return p
 
@@ -169,7 +169,7 @@ def run_analysis(job, pid: str, force=False, use_separated=False):
     x, sr = load_audio(src)
     t0 = time.time()
     base = job.progress
-    res = analyze(x, sr, progress=lambda f, m: (job.update(base + (0.95 - base) * f, m), _check(job)))
+    res = analyze(x, sr, progress=lambda f, m: (job.update(base + (0.95 - base) * f, m), _check(job)), separated=src.name == "separated_decoded.wav")
     out = res.to_dict()
     out["source_hash"] = key
     out["source"] = src.name
@@ -460,7 +460,7 @@ def export_project(job, pid: str, opts: dict):
         stems["instrumental"] = resample(y, isr, sr)
     perf, _ = flavour_preview(proj)
     session = {
-        "app": "VocalForge", "app_version": __version__, "project": proj["name"], "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "app": "Kuralkoodu", "app_version": __version__, "project": proj["name"], "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "platform": platform.platform(), "engine": eng, "model_license": REGISTRY.get(eng["license_id"]),
         "seed": meta["seed"], "voice": meta["voice"], "flavour": meta["flavour"], "changes": meta["changes"],
         "tempo": perf["tempo"], "tempo_map": perf.get("tempo_map"), "key": perf["key"], "transpose": proj.get("transpose", 0),

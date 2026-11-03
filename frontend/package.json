@@ -1,5 +1,5 @@
 {
-  "name": "vocalforge-ui",
+  "name": "kuralkoodu-ui",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -9,8 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@fontsource/catamaran": "5.2.8",
-    "@fontsource/hind-madurai": "5.2.8",
+    "@fontsource-variable/anek-tamil": "5.2.6",
     "react": "19.2.0",
     "react-dom": "19.2.0"
   },

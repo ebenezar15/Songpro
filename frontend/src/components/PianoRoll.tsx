@@ -10,21 +10,25 @@ type Props = {
   flavouredNotes?: Note[] | null;
   playhead?: number | null;
   onChange: (notes: Note[]) => void;
+  pxs: number;
+  scrollX: number;
+  onView: (pxs: number, scrollX: number) => void;
+  onSeek?: (t: number) => void;
 };
 
-const KEY_W = 46;
+export const KEY_W = 46;
 const LANE_H = 44; // loudness lane
-const ROW = 13;
+
 
 function css(name: string) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-export default function PianoRoll({ notes, analysis, bpm, beatOffset, changes, flavouredNotes, playhead, onChange }: Props) {
+export default function PianoRoll({ notes, analysis, bpm, beatOffset, changes, flavouredNotes, playhead, onChange, pxs, scrollX, onView, onSeek }: Props) {
   const wrap = useRef<HTMLDivElement>(null);
   const cv = useRef<HTMLCanvasElement>(null);
-  const [pxs, setPxs] = useState(90); // pixels per second
-  const [scrollX, setScrollX] = useState(0);
+  const setScrollX = (v: number) => onView(pxs, v);
+  const setPxs = (f: (p: number) => number) => onView(f(pxs), scrollX);
   const [sel, setSel] = useState<string | null>(null);
   const [snap, setSnap] = useState(true);
   const [showFlavour, setShowFlavour] = useState(true);
@@ -39,6 +43,7 @@ export default function PianoRoll({ notes, analysis, bpm, beatOffset, changes, f
     return [Math.floor(Math.min(...ms)) - 4, Math.ceil(Math.max(...ms)) + 4];
   }, [notes.length === 0, Math.min(...notes.map((n) => n.midi), 999), Math.max(...notes.map((n) => n.midi), -1)]);
   const rows = hi - lo + 1;
+  const ROW = rows > 34 ? 8 : rows > 26 ? 10 : 13;
   const height = rows * ROW + LANE_H + 22;
 
   useEffect(() => {
@@ -65,8 +70,8 @@ export default function PianoRoll({ notes, analysis, bpm, beatOffset, changes, f
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     const C = {
       bg: css("--roll-bg"), row: css("--roll-row"), black: css("--roll-black"), line: css("--roll-line"),
-      bar: css("--roll-bar"), note: css("--marigold"), noteEdit: css("--jasmine"), f0: css("--peacock"),
-      warn: css("--kumkum"), text: css("--ink-text"), muted: css("--muted"), flav: css("--lotus"),
+      bar: css("--roll-bar"), note: css("--lead"), noteEdit: css("--ivory"), f0: css("--pitch"),
+      warn: css("--warn"), text: css("--ivory"), muted: css("--dim"), flav: css("--harmony"),
     };
     g.fillStyle = C.bg;
     g.fillRect(0, 0, width, height);
@@ -83,12 +88,14 @@ export default function PianoRoll({ notes, analysis, bpm, beatOffset, changes, f
       g.fillRect(tx(r.start), 22, (r.end - r.start) * pxs, rows * ROW);
     }
     // phrases + breaths ribbon
-    g.font = "11px 'Hind Madurai'";
+    g.font = "11px 'Anek Tamil Variable'";
     for (const p of analysis?.phrases ?? []) {
       g.fillStyle = C.line;
       g.fillRect(tx(p.start), 4, (p.end - p.start) * pxs, 12);
-      g.fillStyle = C.muted;
-      g.fillText(p.id.replace("p", "phrase "), tx(p.start) + 4, 14);
+      if ((p.end - p.start) * pxs > 70) {
+        g.fillStyle = C.muted;
+        g.fillText(p.id.replace("p", "phrase "), tx(p.start) + 4, 14);
+      }
     }
     for (const b of analysis?.breaths ?? []) {
       g.fillStyle = C.f0;
@@ -99,18 +106,23 @@ export default function PianoRoll({ notes, analysis, bpm, beatOffset, changes, f
     // beat grid
     const t0 = Math.max(0, scrollX - 1), t1 = scrollX + width / pxs;
     let k = Math.floor((t0 - beatOffset) / beat);
+    const beatPx = beat * pxs;
+    const labelEvery = Math.max(1, Math.ceil(28 / (beatPx * 4)));
     for (let t = beatOffset + k * beat; t < t1; t += beat, k++) {
       if (t < 0) continue;
       const bar = ((k % 4) + 4) % 4 === 0;
+      if (!bar && beatPx < 7) continue;          // too dense to read: bars only
+      if (bar && beatPx * 4 < 5) continue;
       g.strokeStyle = bar ? C.bar : C.line;
       g.lineWidth = bar ? 1.2 : 0.6;
       g.beginPath();
       g.moveTo(tx(t), 22);
       g.lineTo(tx(t), 22 + rows * ROW);
       g.stroke();
-      if (bar) {
+      const barNo = Math.round((t - beatOffset) / beat / 4);
+      if (bar && barNo % labelEvery === 0) {
         g.fillStyle = C.muted;
-        g.fillText(String(Math.round((t - beatOffset) / beat / 4) + 1), tx(t) + 3, 22 + rows * ROW + 12);
+        g.fillText(String(barNo + 1), tx(t) + 3, 22 + rows * ROW + 12);
       }
     }
     // flavoured (ghost) notes
@@ -124,7 +136,8 @@ export default function PianoRoll({ notes, analysis, bpm, beatOffset, changes, f
       g.setLineDash([]);
     }
     // notes
-    g.font = "600 12px 'Hind Madurai'";
+    g.font = "600 12px 'Anek Tamil Variable'";
+    let lyricEnd = -1e9;
     for (const n of notes) {
       const x = tx(n.start), y = ty(n.midi) - ROW / 2 + 1, w = Math.max(3, n.dur * pxs);
       if (x + w < KEY_W || x > width) continue;
@@ -142,9 +155,11 @@ export default function PianoRoll({ notes, analysis, bpm, beatOffset, changes, f
         g.strokeRect(x - 1, y - 1, w + 2, ROW);
       }
       g.globalAlpha = 1;
-      if (n.lyric) {
+      if (n.lyric && n.lyric !== "-" && x > lyricEnd) {  // skip labels that would collide when zoomed out
+        const tw = g.measureText(n.lyric).width;
         g.fillStyle = C.text;
         g.fillText(n.lyric, x + 2, y - 3);
+        lyricEnd = x + tw + 6;
       }
       if (n.vibrato) {
         g.strokeStyle = C.bg;
@@ -160,14 +175,18 @@ export default function PianoRoll({ notes, analysis, bpm, beatOffset, changes, f
       g.globalAlpha = 0.9;
       g.beginPath();
       let pen = false;
+      let lastM = 0;
       const ts = analysis.f0_times, fs = analysis.f0_hz;
       for (let i = 0; i < ts.length; i++) {
         const f = fs[i];
         if (ts[i] < t0 || ts[i] > t1) { pen = false; continue; }
-        if (f <= 0) { pen = false; continue; }
+        if (f <= 0 || (analysis.f0_conf && analysis.f0_conf[i] < 0.6)) { pen = false; continue; }
         const m = 69 + 12 * Math.log2(f / 440);
+        if (m < lo - 1 || m > hi + 1) { pen = false; continue; }
         const x = tx(ts[i]), y = ty(m);
+        if (pen && Math.abs(m - lastM) > 1.5) pen = false;
         if (!pen) { g.moveTo(x, y); pen = true; } else g.lineTo(x, y);
+        lastM = m;
       }
       g.stroke();
       g.globalAlpha = 1;
@@ -196,7 +215,7 @@ export default function PianoRoll({ notes, analysis, bpm, beatOffset, changes, f
       g.fillRect(0, y, KEY_W, ROW);
       if (((m % 12) + 12) % 12 === 0) {
         g.fillStyle = C.muted;
-        g.font = "11px 'Hind Madurai'";
+        g.font = "11px 'Anek Tamil Variable'";
         g.fillText(midiName(m), 6, y + ROW - 2);
       }
     }
@@ -239,7 +258,8 @@ export default function PianoRoll({ notes, analysis, bpm, beatOffset, changes, f
     const r = cv.current!.getBoundingClientRect();
     const x = e.clientX - r.left, y = e.clientY - r.top;
     if (d.mode === "pan") {
-      setScrollX(Math.max(0, d.s0 - (x - d.x0) / pxs));
+      if (Math.abs(x - d.x0) > 3) d.moved = true;
+      if (d.moved) setScrollX(Math.max(0, d.s0 - (x - d.x0) / pxs));
       return;
     }
     const dt = (x - d.x0) / pxs;
@@ -257,6 +277,8 @@ export default function PianoRoll({ notes, analysis, bpm, beatOffset, changes, f
     onChange(next);
   }
   function up() {
+    const d = drag.current;
+    if (d && d.mode === "pan" && !d.moved && onSeek) onSeek(Math.max(0, xt(d.x0)));
     drag.current = null;
   }
   function dbl(e: React.MouseEvent) {
@@ -290,7 +312,7 @@ export default function PianoRoll({ notes, analysis, bpm, beatOffset, changes, f
   }
   function wheel(e: React.WheelEvent) {
     if (e.ctrlKey || e.metaKey) setPxs((p) => Math.min(600, Math.max(20, p * (e.deltaY < 0 ? 1.15 : 0.87))));
-    else setScrollX((s) => Math.max(0, Math.min(duration, s + (e.deltaX || e.deltaY) / pxs)));
+    else if (Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.shiftKey) setScrollX(Math.max(0, Math.min(duration, scrollX + (e.deltaX || e.deltaY) / pxs)));
   }
 
   const selNote = notes.find((n) => n.id === sel);
@@ -306,7 +328,7 @@ export default function PianoRoll({ notes, analysis, bpm, beatOffset, changes, f
         <span className="roll-sel">
           {selNote
             ? `${midiName(selNote.midi)} · ${selNote.start.toFixed(2)}s · ${(selNote.dur * 1000).toFixed(0)} ms${selNote.ipa ? ` · /${selNote.ipa}/` : ""}${selNote.edited ? " · edited" : ""}`
-            : "Drag notes to move, drag the right edge to resize, double-click to add a note or edit its lyric. Alt disables snap."}
+            : "Drag a note to move it, drag its right edge to resize, double-click to add a note or type its lyric. Alt turns snap off."}
         </span>
       </div>
       <div className="roll-canvas" ref={wrap} tabIndex={0} onKeyDown={key} onWheel={wheel}>
@@ -329,10 +351,6 @@ export default function PianoRoll({ notes, analysis, bpm, beatOffset, changes, f
           />
         )}
       </div>
-      <input
-        className="roll-scroll" type="range" min={0} max={Math.max(0, duration - 2)} step={0.05} value={scrollX}
-        onChange={(e) => setScrollX(+e.target.value)} aria-label="Scroll timeline"
-      />
     </section>
   );
 }

@@ -1,6 +1,6 @@
 import pytest
 
-from vocalforge.lyrics import align_to_notes, parse_lyrics
+from kuralkoodu.lyrics import align_to_notes, parse_lyrics
 
 
 def ipa(word, **kw):

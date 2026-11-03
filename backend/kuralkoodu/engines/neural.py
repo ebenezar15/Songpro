@@ -30,7 +30,7 @@ TAMIL_TO_CROSSLINGUAL = {
 
 
 def models_dir() -> Path:
-    return Path(os.environ.get("VOCALFORGE_HOME", Path.home() / "VocalForge")) / "models"
+    return Path(os.environ.get("KURALKOODU_HOME", Path.home() / "Kuralkoodu")) / "models"
 
 
 def consent_given(model_id: str) -> bool:

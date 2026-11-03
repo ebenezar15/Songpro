@@ -21,7 +21,7 @@ STEM_LABELS = {"lead": "LeadDry", "lead_processed": "LeadProcessed", "doubles": 
 
 
 # ------------------------------------------------------------------ WAV
-def _bext_chunk(description: str, time_reference: int, origin="VocalForge"):
+def _bext_chunk(description: str, time_reference: int, origin="Kuralkoodu"):
     now = _dt.datetime.now()
     b = bytearray(602)
     def put(off, size, s):
@@ -29,12 +29,12 @@ def _bext_chunk(description: str, time_reference: int, origin="VocalForge"):
         b[off:off + len(e)] = e
     put(0, 256, description)
     put(256, 32, origin)
-    put(288, 32, "VocalForge")
+    put(288, 32, "Kuralkoodu")
     put(320, 10, now.strftime("%Y-%m-%d"))
     put(330, 8, now.strftime("%H:%M:%S"))
     struct.pack_into("<II", b, 338, time_reference & 0xFFFFFFFF, time_reference >> 32)
     struct.pack_into("<H", b, 346, 1)  # BWF version 1
-    hist = b"A=PCM,F=VocalForge\r\n"
+    hist = b"A=PCM,F=Kuralkoodu\r\n"
     data = bytes(b) + hist
     if len(data) % 2:
         data += b"\0"
@@ -239,7 +239,7 @@ def build_export(stems: dict, native_sr: int, opts: dict, session: dict, notes, 
             if channels == 2 and y.ndim == 1:
                 y = np.stack([y, y], axis=1)
             fn = stem_filename(song, name, v.get("gender", "female"), v.get("age", "young_adult"), bpm, key_short, sr, bit_depth)
-            data = wav_bytes(y, sr, bit_depth, bwf=bwf, time_reference=tref, description=f"VocalForge {name}")
+            data = wav_bytes(y, sr, bit_depth, bwf=bwf, time_reference=tref, description=f"Kuralkoodu {name}")
             z.writestr(fn, data)
             files[name] = {"file": fn, "frames": L, "peak_dbfs": round(20 * np.log10(np.max(np.abs(y)) + 1e-12), 2)}
         if opts.get("midi", True):
@@ -254,7 +254,7 @@ def build_export(stems: dict, native_sr: int, opts: dict, session: dict, notes, 
     return buf.getvalue(), report
 
 
-LOGIC_GUIDE = """Importing VocalForge stems into Logic Pro
+LOGIC_GUIDE = """Importing Kuralkoodu stems into Logic Pro
 ==========================================
 1. Create a new project. Set File > Project Settings > Audio > Sample Rate to the
    rate in the file names (e.g. 48k) and set the tempo to the BPM in the file names.

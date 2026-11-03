@@ -1,7 +1,7 @@
 import numpy as np
 
 from mixes import song
-from vocalforge.separation import sdr, separate
+from kuralkoodu.separation import sdr, separate
 
 
 def test_builtin_separation_improves_sdr_and_sums_to_mix():

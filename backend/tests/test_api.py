@@ -6,7 +6,7 @@ import soundfile as sf
 from fastapi.testclient import TestClient
 
 from synth import hum
-from vocalforge.server import app
+from kuralkoodu.server import app
 
 c = TestClient(app)
 

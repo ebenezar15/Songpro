@@ -9,7 +9,7 @@ from .base import Cancelled, VocalEngine
 class MockEngine(VocalEngine):
     id = "mock"
     name = "Mock (test tones)"
-    license_id = "vocalforge"
+    license_id = "kuralkoodu"
     languages = ("any",)
     native_sr = 48000
     version = "mock-1"

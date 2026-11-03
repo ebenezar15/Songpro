@@ -25,7 +25,7 @@ import numpy as np
 from .separation import METHODS, separation_status
 from .voices import AGE_LABELS, AGES, GENDERS, LICENSE_NOTE, VOICE_BANK, analyse_reference, range_check
 
-app = FastAPI(title="VocalForge", version=__version__)
+app = FastAPI(title="Kuralkoodu", version=__version__)
 jobs = JobManager()
 
 
@@ -392,7 +392,7 @@ if _dist.exists():
 
 def main():
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("VOCALFORGE_PORT", "8765")))
+    uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("KURALKOODU_PORT", "8765")))
 
 
 if __name__ == "__main__":

@@ -3,8 +3,8 @@ upstream pages listed in `source`. 'unclear' blocks export in Commercial Mode.""
 from __future__ import annotations
 
 REGISTRY = {
-    "vocalforge": {
-        "name": "VocalForge built-in engines and voice bank", "code": "MIT (this repository)", "weights": "none (parametric)",
+    "kuralkoodu": {
+        "name": "Kuralkoodu built-in engines and voice bank", "code": "MIT (this repository)", "weights": "none (parametric)",
         "commercial": "allowed", "source": "this repository", "size_mb": 0, "notes": "No recorded voice data is used."},
     "soulx-singer": {
         "name": "SoulX-Singer (Soul-AILab)", "code": "Apache-2.0", "weights": "Apache-2.0 (official Hugging Face release)",

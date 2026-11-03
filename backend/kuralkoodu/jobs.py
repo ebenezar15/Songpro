@@ -1,6 +1,7 @@
 """Cancelable background jobs with progress + logs."""
 from __future__ import annotations
 
+import json
 import threading
 import time
 import traceback
@@ -63,7 +64,8 @@ class JobManager:
             job.status = "running"
             job.log(f"{kind} started")
             try:
-                job.result = fn(job, *args, **kwargs)
+                # results go to JSON: convert numpy scalars once, here
+                job.result = json.loads(json.dumps(fn(job, *args, **kwargs), default=float))
                 job.status = "done"
                 job.progress = 1.0
                 job.log(f"{kind} finished")

@@ -159,9 +159,9 @@ class Note:
         return self.start + self.dur
 
 
-def segment_notes(times, f0, conf, rms_db, onset_env, min_dur=0.08):
+def segment_notes(times, f0, conf, rms_db, onset_env, min_dur=0.08, floor_db=45, min_conf=0.55):
     midi = hz_to_midi(f0)
-    voiced = (f0 > 0) & (conf > 0.55) & (rms_db > rms_db.max() - 45)
+    voiced = (f0 > 0) & (conf > min_conf) & (rms_db > np.percentile(rms_db, 99) - floor_db)
     sm = midi.copy()
     sm[~voiced] = np.nan
     # median smooth through vibrato
@@ -486,7 +486,9 @@ class AnalysisResult:
         return d
 
 
-def analyze(data: np.ndarray, sr: int, progress=lambda f, m: None) -> AnalysisResult:
+def analyze(data: np.ndarray, sr: int, progress=lambda f, m: None, separated: bool = False) -> AnalysisResult:
+    """separated=True: the input came out of vocal separation, so quiet music bleed is ignored
+    (stricter loudness / periodicity gates, longer minimum notes)."""
     x = to_mono(data).astype(np.float32)
     duration = len(x) / sr
     warnings = []
@@ -510,7 +512,18 @@ def analyze(data: np.ndarray, sr: int, progress=lambda f, m: None) -> AnalysisRe
     f0[gate] = 0
     progress(0.55, "Segmenting notes")
     env = onset_envelope(y, ANALYSIS_SR)[: len(times)]
-    notes = segment_notes(times, f0, conf, rms, env)
+    if separated:
+        notes = segment_notes(times, f0, conf, rms, env, min_dur=0.12, floor_db=24, min_conf=0.7)
+        if len(notes) >= 8:  # bass / chord bleed sits far outside the singer's register
+            centre = float(np.median([n.midi for n in notes]))
+            kept = [n for n in notes if centre - 12.5 <= n.midi <= centre + 14]
+            if len(kept) < len(notes):
+                warnings.append(f"Ignored {len(notes) - len(kept)} notes far outside the singer's register (likely music left in the separated vocal).")
+            notes = kept
+            for i, n in enumerate(notes):
+                n.id = f"n{i}"
+    else:
+        notes = segment_notes(times, f0, conf, rms, env)
     if not notes:
         warnings.append("No stable notes were found. Is the input pitched (hum / sing / instrument)?")
     progress(0.7, "Estimating tempo")

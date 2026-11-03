@@ -3,13 +3,13 @@ import hashlib
 import numpy as np
 
 from synth import hum
-from vocalforge.analysis import analyze
-from vocalforge.engines import FormantSingerEngine, MockEngine
-from vocalforge.flavour import apply_flavours
-from vocalforge.lyrics import align_to_notes, parse_lyrics
-from vocalforge.planner import build_plan
-from vocalforge.service import performance_from_analysis
-from vocalforge.voices import range_check, voice_params
+from kuralkoodu.analysis import analyze
+from kuralkoodu.engines import FormantSingerEngine, MockEngine
+from kuralkoodu.flavour import apply_flavours
+from kuralkoodu.lyrics import align_to_notes, parse_lyrics
+from kuralkoodu.planner import build_plan
+from kuralkoodu.service import performance_from_analysis
+from kuralkoodu.voices import range_check, voice_params
 
 MEL = [64, 64, 67, 69, 67, 64, 62, 64, 60, 62, 64, 67, 64, 62, 60, 60]
 

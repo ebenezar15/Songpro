@@ -119,8 +119,8 @@ def _envelope(freqs, F, B, nasal, lp, bright, scale):
 
 class FormantSingerEngine(VocalEngine):
     id = "formant"
-    name = "VocalForge Formant Singer (local)"
-    license_id = "vocalforge"
+    name = "Kuralkoodu Formant Singer (local)"
+    license_id = "kuralkoodu"
     languages = ("ta", "ta-Latn", "en")
     native_sr = SR
     version = "formant-1.0"

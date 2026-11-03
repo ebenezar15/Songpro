@@ -1,4 +1,4 @@
-// Thin client for the local VocalForge API (127.0.0.1 only).
+// Thin client for the local Kuralkoodu API (127.0.0.1 only).
 export type Note = {
   id: string; start: number; dur: number; midi: number; velocity?: number; confidence?: number;
   lyric?: string; ipa?: string; phonemes?: { onset: string[]; vowel: string; coda: string[] } | null;
@@ -60,3 +60,17 @@ export async function waitJob(job: Job, onTick: (j: Job) => void): Promise<Job> 
 
 export const NOTE_NAMES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
 export const midiName = (m: number) => `${NOTE_NAMES[((Math.round(m) % 12) + 12) % 12]}${Math.floor(Math.round(m) / 12) - 1}`;
+
+export const playUrl = (pid: string, src: string, v = 0) => `/api/projects/${pid}/play/${encodeURIComponent(src)}?v=${v}`;
+export const peaksOf = (pid: string, src: string, n: number, v = 0) =>
+  fetch(`/api/projects/${pid}/peaks/${encodeURIComponent(src)}?n=${n}&v=${v}`).then(j<{ duration: number; min: number[]; max: number[] }>);
+export const separateApi = {
+  run: (pid: string, method: string, strength: number) =>
+    fetch(`/api/projects/${pid}/separate`, { method: "POST", headers: H, body: JSON.stringify({ method, strength }) }).then(j<Job>),
+  export: (pid: string, body: any) =>
+    fetch(`/api/projects/${pid}/separation/export`, { method: "POST", headers: H, body: JSON.stringify(body) }).then(j<Job>),
+};
+export const fmtTime = (t: number) => {
+  const m = Math.floor(t / 60), s = t - m * 60;
+  return `${m}:${s.toFixed(1).padStart(4, "0")}`;
+};

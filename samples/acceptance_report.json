@@ -58,10 +58,10 @@
       "unassigned_syllables": [],
       "melisma_notes": 1
     },
-    "analysis_runtime_s": 1.22,
-    "render_runtime_s": 5.53,
-    "render_realtime_factor": 0.177,
-    "peak_rss_mb": 518.1,
+    "analysis_runtime_s": 0.97,
+    "render_runtime_s": 1.31,
+    "render_realtime_factor": 0.042,
+    "peak_rss_mb": 302.2,
     "flavour_changes_classical": [
       "Gamaka (kampita) on 24 note(s)",
       "Pitch scoops into 1 note(s)",
@@ -70,5 +70,45 @@
       "Phrase arc (swell then release)",
       "Melisma turn (3 notes) at phrase end"
     ]
-  }
+  },
+  "separation_builtin_synthetic": [
+    {
+      "seed": 3,
+      "vocal_sdr_mix_db": -0.51,
+      "vocal_sdr_separated_db": 18.0,
+      "instrumental_sdr_mix_db": 0.71,
+      "instrumental_sdr_separated_db": 17.79,
+      "sums_to_mix": true
+    },
+    {
+      "seed": 5,
+      "vocal_sdr_mix_db": -1.0,
+      "vocal_sdr_separated_db": 17.04,
+      "instrumental_sdr_mix_db": 1.2,
+      "instrumental_sdr_separated_db": 17.09,
+      "sums_to_mix": true
+    },
+    {
+      "seed": 8,
+      "vocal_sdr_mix_db": -0.27,
+      "vocal_sdr_separated_db": 18.79,
+      "instrumental_sdr_mix_db": 0.47,
+      "instrumental_sdr_separated_db": 18.2,
+      "sums_to_mix": true
+    }
+  ],
+  "separation_4min": {
+    "seconds_of_audio": 245,
+    "runtime_s": 24.9
+  },
+  "long_song": {
+    "input_seconds": 242.0,
+    "notes": 490,
+    "detected_bpm": 122.0,
+    "true_bpm": 122,
+    "analysis_runtime_s": 3.4,
+    "render_runtime_s": 14.7,
+    "output_seconds": 242.2
+  },
+  "peak_rss_mb_whole_script": 1379.5
 }

@@ -5,7 +5,7 @@ import zipfile
 import numpy as np
 import soundfile as sf
 
-from vocalforge.export import build_export, midi_bytes, read_wav_header, stem_filename, wav_bytes
+from kuralkoodu.export import build_export, midi_bytes, read_wav_header, stem_filename, wav_bytes
 
 
 def test_wav_headers():

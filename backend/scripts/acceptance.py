@@ -23,14 +23,14 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 from synth import hum  # noqa: E402
-from vocalforge.analysis import analyze  # noqa: E402
-from vocalforge.engines import FormantSingerEngine  # noqa: E402
-from vocalforge.export import build_export, read_wav_header  # noqa: E402
-from vocalforge.flavour import apply_flavours, make_double, make_harmony  # noqa: E402
-from vocalforge.lyrics import align_to_notes, parse_lyrics  # noqa: E402
-from vocalforge.planner import build_plan  # noqa: E402
-from vocalforge.service import performance_from_analysis, renumber_phrases  # noqa: E402
-from vocalforge.voices import voice_params  # noqa: E402
+from kuralkoodu.analysis import analyze  # noqa: E402
+from kuralkoodu.engines import FormantSingerEngine  # noqa: E402
+from kuralkoodu.export import build_export, read_wav_header  # noqa: E402
+from kuralkoodu.flavour import apply_flavours, make_double, make_harmony  # noqa: E402
+from kuralkoodu.lyrics import align_to_notes, parse_lyrics  # noqa: E402
+from kuralkoodu.planner import build_plan  # noqa: E402
+from kuralkoodu.service import performance_from_analysis, renumber_phrases  # noqa: E402
+from kuralkoodu.voices import voice_params  # noqa: E402
 
 LYRICS = """கண்ணே கலைமானே கன்னி மயிலென
 கண்டேன் உன்னை நானே
@@ -142,6 +142,36 @@ def main(out_dir: Path):
                             "analysis_runtime_s": round(t_an, 2), "render_runtime_s": round(t_render, 2),
                             "render_realtime_factor": round(t_render / (len(y0) / osr), 3), "peak_rss_mb": round(rss, 1),
                             "flavour_changes_classical": [c["summary"] for c in chf][:12]}
+    # --- 6. separation on synthetic songs (known vocal + band), and a 4-minute song end to end
+    from mixes import song, band
+    from kuralkoodu.separation import sdr, separate
+    sep = []
+    for seed in (3, 5, 8):
+        mix, v, b = song(30, seed=seed)
+        voc, inst, _ = separate(mix, 44100, "builtin")
+        sep.append({"seed": seed, "vocal_sdr_mix_db": round(sdr(mix.mean(1), v), 2), "vocal_sdr_separated_db": round(sdr(voc.mean(1), v), 2),
+                    "instrumental_sdr_mix_db": round(sdr(mix, b), 2), "instrumental_sdr_separated_db": round(sdr(inst, b), 2),
+                    "sums_to_mix": bool(np.allclose(voc + inst, mix, atol=1e-5))})
+    report["separation_builtin_synthetic"] = sep
+    long_band = band(245, seed=1)
+    t0 = time.time()
+    separate(long_band, 44100, "builtin")
+    report["separation_4min"] = {"seconds_of_audio": 245, "runtime_s": round(time.time() - t0, 1)}
+    rng2 = np.random.default_rng(9)
+    yl, srl, _ = hum(list(60 + rng2.choice([0, 2, 4, 5, 7, 9], size=490)), bpm=122, vibrato=20)
+    t0 = time.time()
+    al = analyze(yl[:, None], srl).to_dict()
+    t_al = time.time() - t0
+    pl = performance_from_analysis(al)
+    pl["notes"], _ = align_to_notes(pl["notes"], parse_lyrics(LYRICS.replace("\n", " ") * 12, "ta"))
+    renumber_phrases(pl)
+    pl, _ = apply_flavours(pl, {"creative": 40, "seed": 2})
+    t0 = time.time()
+    yo, so = eng.render(build_plan(pl, voice, al, seed=2), 2)
+    report["long_song"] = {"input_seconds": round(len(yl) / srl, 1), "notes": len(al["notes"]), "detected_bpm": al["tempo"]["bpm"], "true_bpm": 122,
+                           "analysis_runtime_s": round(t_al, 1), "render_runtime_s": round(time.time() - t0, 1),
+                           "output_seconds": round(len(yo) / so, 1)}
+    report["peak_rss_mb_whole_script"] = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1)
     print(json.dumps(report, indent=2, ensure_ascii=False))
     (out_dir / "acceptance_report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False))
 
