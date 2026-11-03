@@ -126,6 +126,21 @@ def update_performance(pid: str, body: dict):
         if k in body:
             perf[k] = body[k]
     perf["edited"] = True
+    # lyrics typed into the piano roll: re-derive that note's phonemes
+    L = proj["lyrics"]
+    for n in perf["notes"]:
+        if n.pop("lyric_dirty", False):
+            txt = (n.get("lyric") or "").strip()
+            if txt in ("", "-"):
+                n["continuation"] = txt == "-"
+                continue
+            syl = [s for s in parse_lyrics(txt, L.get("language", "ta"), L.get("dialect", "standard"), L.get("glides", True)) if not s.get("hold")]
+            if syl:
+                onset = syl[0]["onset"]
+                coda = syl[-1]["coda"]
+                n["phonemes"] = {"onset": onset, "vowel": syl[0]["vowel"] if len(syl) == 1 else syl[-1]["vowel"], "coda": coda}
+                n["ipa"] = "".join(s["ipa"] for s in syl)
+                n["continuation"] = False
     service.renumber_phrases(perf)
     if body.get("realign_lyrics"):
         service.apply_lyrics(proj)

@@ -1,0 +1,74 @@
+{
+  "analysis_accuracy": {
+    "median_pitch_error_cents": 2.2,
+    "p95_pitch_error_cents": 5.2,
+    "tempo_errors_bpm": [
+      0.154,
+      0.119,
+      0.026,
+      0.133,
+      0.053,
+      0.118
+    ],
+    "max_tempo_error_bpm": 0.154
+  },
+  "creative0_fidelity": {
+    "performance_notes": 45,
+    "detected_in_render": 42,
+    "matched": 42,
+    "median_pitch_error_cents": 1.5,
+    "p95_pitch_error_cents": 4.85,
+    "median_onset_error_ms": 10.0,
+    "p95_onset_error_ms": 30.0,
+    "flavour_changes": 0
+  },
+  "reproducibility": {
+    "engine": "formant-1.0",
+    "identical_hash": true
+  },
+  "export": {
+    "files": [
+      "LOGIC_IMPORT_GUIDE.txt",
+      "Song_Doubles_Female_YoungAdult_104bpm_Dmaj_48k24b.wav",
+      "Song_Harmonies_Female_YoungAdult_104bpm_Dmaj_48k24b.wav",
+      "Song_LeadDry_Female_YoungAdult_104bpm_Dmaj_48k24b.wav",
+      "Song_LeadProcessed_Female_YoungAdult_104bpm_Dmaj_48k24b.wav",
+      "Song_Notes_104bpm.mid",
+      "Song_Session.json"
+    ],
+    "frames": [
+      1497840
+    ],
+    "sample_rates": [
+      48000
+    ],
+    "bits": [
+      24
+    ],
+    "gain_applied_db": 0.0,
+    "aligned": true
+  },
+  "unseen_30s": {
+    "input_seconds": 31.0,
+    "detected_bpm": 104.05,
+    "true_bpm": 104.0,
+    "key": "D major",
+    "notes": 45,
+    "lyrics_alignment": {
+      "unassigned_syllables": [],
+      "melisma_notes": 1
+    },
+    "analysis_runtime_s": 1.22,
+    "render_runtime_s": 5.53,
+    "render_realtime_factor": 0.177,
+    "peak_rss_mb": 518.1,
+    "flavour_changes_classical": [
+      "Gamaka (kampita) on 24 note(s)",
+      "Pitch scoops into 1 note(s)",
+      "Slides into 20 note(s)",
+      "Timing loosened (avg 1 ms)",
+      "Phrase arc (swell then release)",
+      "Melisma turn (3 notes) at phrase end"
+    ]
+  }
+}
