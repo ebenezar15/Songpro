@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, fmtTime, Job, midiName, separateApi } from "../api";
+import { Recorder, startWavRecording } from "../recorder";
 
 export type PanelProps = {
   proj: any; meta: any; save: (patch: any) => Promise<void>; reload: () => Promise<void>;
@@ -16,12 +17,11 @@ export const INPUT_TYPES = [
 
 // ------------------------------------------------------------------ Source
 export function SourcePanel({ proj, meta, save, reload, runJob, busy, analysis, savePerf }: PanelProps & { analysis: any; savePerf: (b: any) => Promise<void> }) {
-  const [rec, setRec] = useState<MediaRecorder | null>(null);
+  const [rec, setRec] = useState<Recorder | null>(null);
   const [upl, setUpl] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [lyrics, setLyrics] = useState(proj.lyrics);
   const [syll, setSyll] = useState<any[]>([]);
-  const chunks = useRef<Blob[]>([]);
   const taps = useRef<number[]>([]);
   const [tap, setTap] = useState<number | null>(null);
 
@@ -39,16 +39,8 @@ export function SourcePanel({ proj, meta, save, reload, runJob, busy, analysis, 
     try { await api.upload(proj.id, file, name, "input"); await reload(); } catch (e: any) { setErr(e.message); } finally { setUpl(false); }
   }
   async function toggleRec() {
-    if (rec) { rec.stop(); setRec(null); return; }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
-      const r = new MediaRecorder(stream);
-      chunks.current = [];
-      r.ondataavailable = (e) => chunks.current.push(e.data);
-      r.onstop = () => { stream.getTracks().forEach((t) => t.stop()); upload(new Blob(chunks.current, { type: r.mimeType }), "recording.webm"); };
-      r.start();
-      setRec(r);
-    } catch (e: any) { setErr(`Microphone unavailable: ${e.message}`); }
+    if (rec) { setRec(null); upload(await rec.stop(), "recording.wav"); return; }
+    try { setRec(await startWavRecording()); } catch (e: any) { setErr(`Microphone unavailable: ${e.message}`); }
   }
   const needsLyrics = proj.input_type === "hum";
   const perf = proj.performance;
@@ -97,7 +89,7 @@ export function SourcePanel({ proj, meta, save, reload, runJob, busy, analysis, 
         {lyrics.language !== "en" && <label className="check small"><input type="checkbox" checked={lyrics.glides} onChange={(e) => setLyrics({ ...lyrics, glides: e.target.checked })} /> Colloquial glides (எ → ye)</label>}
         <textarea className="lyrics" rows={6} value={lyrics.text} lang={lyrics.language === "ta" ? "ta" : undefined}
           placeholder={needsLyrics ? "One phrase per line. Type - to hold a syllable over extra notes." : "Optional when the recording already has words"}
-          onChange={(e) => setLyrics({ ...lyrics, text: e.target.value })} onBlur={() => save({ lyrics })} />
+          onChange={(e) => setLyrics({ ...lyrics, text: e.target.value })} onBlur={() => { if (JSON.stringify(lyrics) !== JSON.stringify(proj.lyrics)) save({ lyrics }); }} />
         {!lyrics.text && <button className="link" onClick={() => setLyrics({ ...lyrics, text: TAMIL_SAMPLE, language: "ta" })}>Use a Tamil example</button>}
         {syll.length > 0 && (
           <details className="ipa" open={syll.length < 60}>
@@ -112,7 +104,7 @@ export function SourcePanel({ proj, meta, save, reload, runJob, busy, analysis, 
           </details>
         )}
         <button className="btn primary wide" disabled={busy || !proj.input || (needsLyrics && !lyrics.text.trim())}
-          onClick={async () => { await save({ lyrics }); await runJob(api.analyze(proj.id)); await reload(); }}>
+          onClick={async () => { if (JSON.stringify(lyrics) !== JSON.stringify(proj.lyrics)) await save({ lyrics }); await runJob(api.analyze(proj.id)); await reload(); }}>
           {proj.input_type === "song" && !proj.separation ? "Separate and analyse" : perf ? "Analyse again" : "Analyse"}
         </button>
         {needsLyrics && proj.input && !lyrics.text.trim() && <p className="dim small">A hummed melody needs lyrics first.</p>}
@@ -124,7 +116,7 @@ export function SourcePanel({ proj, meta, save, reload, runJob, busy, analysis, 
           <div className="facts">
             <label>Tempo
               <span className="row tight">
-                <input type="number" step={0.1} min={30} max={260} value={perf.tempo.bpm} onChange={(e) => savePerf({ tempo: { ...perf.tempo, bpm: +e.target.value } })} aria-label="Tempo in BPM" />
+                <input type="number" step={0.1} min={30} max={260} value={perf.tempo.bpm} onChange={(e) => { const b = +e.target.value; if (b >= 20 && b <= 400) savePerf({ tempo: { ...perf.tempo, bpm: b } }); }} aria-label="Tempo in BPM" />
                 <button className="btn small" onClick={() => {
                   const now = performance.now();
                   taps.current = [...taps.current.filter((t) => now - t < 3000), now];

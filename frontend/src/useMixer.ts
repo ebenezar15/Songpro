@@ -23,11 +23,16 @@ export function useMixer(lanes: MixLane[]) {
     if (bufs.current.has(url)) return bufs.current.get(url)!;
     if (!loadingUrls.current.has(url)) {
       loadingUrls.current.set(url, (async () => {
-        const r = await fetch(url);
-        if (!r.ok) throw new Error(`Could not load audio (${r.status})`);
-        const b = await ctx.current!.decodeAudioData(await r.arrayBuffer());
-        bufs.current.set(url, b);
-        return b;
+        try {
+          const r = await fetch(url);
+          if (!r.ok) throw new Error(`Could not load audio (${r.status})`);
+          const b = await ctx.current!.decodeAudioData(await r.arrayBuffer());
+          bufs.current.set(url, b);
+          return b;
+        } catch (e) {
+          loadingUrls.current.delete(url); // allow a retry next time
+          throw e;
+        }
       })());
     }
     return loadingUrls.current.get(url)!;
@@ -48,17 +53,15 @@ export function useMixer(lanes: MixLane[]) {
     const start = from ?? p0.current;
     setLoading(true);
     setError(null);
-    try {
-      // decode every lane so A/B switching never waits
-      await Promise.all(lanesRef.current.map((l) => load(l.url)));
-    } catch (e: any) {
-      setError(e.message);
-      setLoading(false);
-      return;
-    }
+    // decode every lane so A/B switching never waits; a lane that fails is skipped, not fatal
+    const results = await Promise.allSettled(lanesRef.current.map((l) => load(l.url)));
     setLoading(false);
+    const ready = lanesRef.current.filter((_, i) => results[i].status === "fulfilled");
+    const failed = lanesRef.current.length - ready.length;
+    if (!ready.length) { setError("No audio could be loaded for this song."); return; }
+    if (failed) setError(`${failed} lane${failed > 1 ? "s" : ""} could not be loaded and ${failed > 1 ? "are" : "is"} silent.`);
     const when = c.currentTime + 0.06;
-    live.current = lanesRef.current.map((l) => {
+    live.current = ready.map((l) => {
       const b = bufs.current.get(l.url)!;
       const src = c.createBufferSource();
       src.buffer = b;
@@ -75,7 +78,7 @@ export function useMixer(lanes: MixLane[]) {
     t0.current = when;
     p0.current = start;
     setPlaying(true);
-    const end = Math.max(...lanesRef.current.map((l) => l.offset + (bufs.current.get(l.url)?.duration ?? 0)));
+    const end = Math.max(...ready.map((l) => l.offset + (bufs.current.get(l.url)?.duration ?? 0)));
     const tick = () => {
       const p = p0.current + Math.max(0, c.currentTime - t0.current);
       if (p >= end) { stop(); p0.current = 0; setPos(0); return; }
@@ -87,10 +90,12 @@ export function useMixer(lanes: MixLane[]) {
 
   const pause = useCallback(() => {
     if (!ctx.current) return;
-    p0.current = p0.current + Math.max(0, ctx.current.currentTime - t0.current);
+    if (live.current.length) p0.current = p0.current + Math.max(0, ctx.current.currentTime - t0.current);
     setPos(p0.current);
     stop();
   }, [stop]);
+  const pauseRef = useRef(pause);
+  pauseRef.current = pause;
 
   const seek = useCallback((t: number) => {
     p0.current = Math.max(0, t);
@@ -111,7 +116,8 @@ export function useMixer(lanes: MixLane[]) {
   useEffect(() => {
     const urls = new Set(lanes.map((l) => l.url));
     for (const k of [...bufs.current.keys()]) if (!urls.has(k)) { bufs.current.delete(k); loadingUrls.current.delete(k); }
-    if (live.current.length) stop();
+    for (const k of [...loadingUrls.current.keys()]) if (!urls.has(k)) loadingUrls.current.delete(k);
+    if (live.current.length) pauseRef.current(); // keep the playhead where it is
   }, [lanes.map((l) => l.url).join(",")]);
 
   useEffect(() => () => stop(), [stop]);

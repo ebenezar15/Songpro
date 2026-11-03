@@ -48,16 +48,42 @@ class Job:
                 "result": self.result, "error": self.error}
 
 
+MAX_KEPT_JOBS = 200
+
+
 class JobManager:
     def __init__(self, workers=2):
         self.pool = ThreadPoolExecutor(max_workers=workers)
         self.jobs: dict[str, Job] = {}
+        self._locks: dict[str, threading.Lock] = {}
+        self._guard = threading.Lock()
+
+    def _project_lock(self, project_id):
+        with self._guard:
+            return self._locks.setdefault(project_id or "-", threading.Lock())
+
+    def _prune(self):
+        finished = [j for j in self.jobs.values() if j.status in ("done", "error", "cancelled")]
+        for j in sorted(finished, key=lambda j: j.created)[: max(0, len(self.jobs) - MAX_KEPT_JOBS)]:
+            self.jobs.pop(j.id, None)
 
     def submit(self, kind, project_id, fn, *args, **kwargs) -> Job:
+        self._prune()
         job = Job(kind, project_id)
         self.jobs[job.id] = job
+        lock = self._project_lock(project_id)
 
         def run():
+            # one job at a time per song: jobs share project.json, the separation and the render folders
+            if not lock.acquire(blocking=False):
+                job.message = "Waiting for the other job on this song to finish"
+                lock.acquire()
+            try:
+                _run()
+            finally:
+                lock.release()
+
+        def _run():
             if job.cancelled():
                 job.status = "cancelled"
                 return

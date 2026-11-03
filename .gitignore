@@ -12,3 +12,8 @@ models/
 *.onnx
 .DS_Store
 src-tauri/target/
+.venv-build/
+build/
+dist/
+packaging/macos/build/
+*.spec.bak

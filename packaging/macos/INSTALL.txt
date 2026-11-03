@@ -1,0 +1,12 @@
+Installing Kuralkoodu on your Mac
+=================================
+
+1. Drag Kuralkoodu into the Applications folder.
+2. The first time, open it with a right-click (or Control-click) on Kuralkoodu > Open, then click Open.
+   This build is not signed with an Apple Developer ID yet, so macOS asks once. If macOS says the app
+   "is damaged", run this in Terminal and open it again:
+       xattr -dr com.apple.quarantine /Applications/Kuralkoodu.app
+3. Allow microphone access when you first press Record.
+
+Everything runs on your Mac. Projects are saved in your home folder under Kuralkoodu/.
+To use the optional Demucs separator or neural singers, see the README in the source repository.

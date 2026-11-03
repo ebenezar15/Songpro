@@ -3,7 +3,7 @@ import { fmtTime, peaksOf } from "../api";
 import { KEY_W } from "./PianoRoll";
 
 export type Lane = {
-  id: string; label: string; color: string; src: string; offset: number; version: number;
+  id: string; label: string; color: string; src: string; offset: number; version: string;
   note?: string; download?: { href: string; label: string } | null;
 };
 

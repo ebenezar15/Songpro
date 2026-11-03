@@ -27,18 +27,26 @@ def load_audio(path: str | Path) -> tuple[np.ndarray, int]:
         return data, int(sr)
     except Exception:
         pass
-    ffmpeg = shutil.which("ffmpeg")
-    if not ffmpeg:
-        raise AudioImportError(f"Could not decode {path.name}: libsndfile failed and ffmpeg is not installed.")
+    # macOS ships afconvert (Core Audio): it decodes MP3, M4A/AAC, ALAC and AIFF with no extra install.
+    # ffmpeg (if present) covers everything else, e.g. WebM/Opus.
+    decoders = []
+    if shutil.which("afconvert"):
+        decoders.append(("afconvert", lambda src, dst: [shutil.which("afconvert"), "-f", "WAVE", "-d", "LEF32", str(src), str(dst)]))
+    if shutil.which("ffmpeg"):
+        decoders.append(("ffmpeg", lambda src, dst: [shutil.which("ffmpeg"), "-nostdin", "-loglevel", "error", "-y", "-i", str(src), "-c:a", "pcm_f32le", str(dst)]))
+    if not decoders:
+        raise AudioImportError(f"Could not decode {path.name}. Save it as WAV or AIFF, or install ffmpeg for this format.")
+    errors = []
     with tempfile.TemporaryDirectory() as td:
         out = Path(td) / "decoded.wav"
-        proc = subprocess.run(
-            [ffmpeg, "-nostdin", "-loglevel", "error", "-y", "-i", str(path), "-c:a", "pcm_f32le", str(out)],
-            capture_output=True, text=True,
-        )
-        if proc.returncode != 0 or not out.exists():
-            raise AudioImportError(f"ffmpeg could not decode {path.name}: {proc.stderr.strip()[:300]}")
-        data, sr = sf.read(str(out), dtype="float32", always_2d=True)
+        for name, cmd in decoders:
+            proc = subprocess.run(cmd(path, out), capture_output=True, text=True)
+            if proc.returncode == 0 and out.exists():
+                data, sr = sf.read(str(out), dtype="float32", always_2d=True)
+                break
+            errors.append(f"{name}: {proc.stderr.strip()[:200]}")
+        else:
+            raise AudioImportError(f"Could not decode {path.name} ({'; '.join(errors)}). Save it as WAV or AIFF.")
     return data, int(sr)
 
 

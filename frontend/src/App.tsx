@@ -20,7 +20,6 @@ export default function App() {
   const [analysis, setAnalysis] = useState<any>(null);
   const [flav, setFlav] = useState<any>(null);
   const [renders, setRenders] = useState<Record<string, any>>({});
-  const [ver, setVer] = useState(0);
   const [tab, setTab] = useState<string>("voice");
   const [job, setJob] = useState<Job | null>(null);
   const [showLog, setShowLog] = useState(false);
@@ -41,7 +40,6 @@ export default function App() {
     const out: Record<string, any> = {};
     for (const m of ["preview", "full"]) { try { out[m] = await api.renderMeta(id, m); } catch { /* none yet */ } }
     setRenders(out);
-    setVer((v) => v + 1);
     return out;
   }, []);
 
@@ -62,7 +60,7 @@ export default function App() {
     if (last) loadProject(last).catch(() => {});
   }, [loadProject]);
 
-  const reload = async () => { if (proj) { await loadProject(proj.id); setVer((v) => v + 1); } };
+  const reload = async () => { if (proj) await loadProject(proj.id); };
   const save = async (patch: any) => {
     const p = await api.update(proj.id, patch);
     setProj(p);
@@ -103,22 +101,24 @@ export default function App() {
   const rmMode = renders[showRender] ? showRender : renders.full ? "full" : "preview";
   const lanes: Lane[] = useMemo(() => {
     if (!proj?.input) return [];
-    const L: Lane[] = [{ id: "input", label: proj.input_type === "song" ? "Song" : "Your recording", color: "--mix", src: "input", offset: 0, version: ver, note: proj.input.original_name }];
+    // each lane's version comes from its own content, so unrelated changes never refetch audio
+    const L: Lane[] = [{ id: "input", label: proj.input_type === "song" ? "Song" : "Your recording", color: "--mix", src: "input", offset: 0, version: proj.input.hash, note: proj.input.original_name }];
     if (proj.separation) {
-      L.push({ id: "vocals", label: "Isolated vocal", color: "--vocal", src: "vocals", offset: 0, version: ver, note: proj.separation.method === "demucs" ? "Demucs" : "Quick separation" });
-      L.push({ id: "instrumental", label: "Instrumental", color: "--music", src: "instrumental", offset: 0, version: ver, note: "Music without the voice" });
+      const sv = `${proj.separation.method}-${proj.separation.time}`;
+      L.push({ id: "vocals", label: "Isolated vocal", color: "--vocal", src: "vocals", offset: 0, version: sv, note: proj.separation.method === "demucs" ? "Demucs" : "Quick separation" });
+      L.push({ id: "instrumental", label: "Instrumental", color: "--music", src: "instrumental", offset: 0, version: sv, note: "Music without the voice" });
     }
     if (rm) {
       const label: Record<string, [string, string]> = { lead: ["New lead", "--lead"], doubles: ["Doubles", "--double"], harmonies: ["Harmonies", "--harmony"], adlibs: ["Ad-libs", "--adlib"] };
       for (const s of Object.keys(rm.audio_sha256)) {
         const [lab, col] = label[s] || [s, "--lead"];
-        L.push({ id: `r-${s}`, label: lab, color: col, src: `render:${rmMode}:${s}`, offset: rm.offset_s || 0, version: ver,
+        L.push({ id: `r-${s}`, label: lab, color: col, src: `render:${rmMode}:${s}`, offset: rm.offset_s || 0, version: rm.audio_sha256[s],
           note: s === "lead" ? `${rmMode === "preview" ? `Preview, ${rm.bars} bars` : "Full song"}, seed ${rm.seed}` : undefined,
           download: { href: `/api/projects/${proj.id}/renders/${rmMode}/${s}.wav`, label: `Download ${lab} (32-bit float WAV)` } });
       }
     }
     return L;
-  }, [proj?.input, proj?.separation, proj?.input_type, rm, rmMode, ver]);
+  }, [proj?.input, proj?.separation, proj?.input_type, rm, rmMode]);
 
   const compareSets: Record<Compare, (id: string) => boolean> = {
     original: (id) => id === "input",

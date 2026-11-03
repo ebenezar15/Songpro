@@ -6,7 +6,9 @@ import os
 import platform
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from urllib.parse import urlparse
+
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -27,6 +29,23 @@ from .voices import AGE_LABELS, AGES, GENDERS, LICENSE_NOTE, VOICE_BANK, analyse
 
 app = FastAPI(title="Kuralkoodu", version=__version__)
 jobs = JobManager()
+
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "testserver"}
+
+
+@app.middleware("http")
+async def local_only(request: Request, call_next):
+    """The API is for this computer only: reject foreign Host headers (DNS rebinding) and
+    state-changing requests from other web origins (CSRF from pages the user happens to visit)."""
+    host = (request.headers.get("host") or "").rsplit(":", 1)[0].strip("[]")
+    if host not in LOCAL_HOSTS:
+        return JSONResponse({"detail": "Kuralkoodu only answers requests from this computer."}, status_code=403)
+    origin = request.headers.get("origin")
+    if origin and request.method not in ("GET", "HEAD", "OPTIONS"):
+        o = urlparse(origin)
+        if o.hostname not in LOCAL_HOSTS:
+            return JSONResponse({"detail": "Requests from other websites are not allowed."}, status_code=403)
+    return await call_next(request)
 
 
 def _proj(pid):
@@ -105,18 +124,94 @@ def get_project(pid: str):
 ALLOWED_UPDATE = {"name", "song_name", "input_type", "separation_method", "lyrics", "voice", "flavour", "commercial_mode", "transpose"}
 
 
+def _validate_update(body: dict):
+    """Reject values that would only fail later inside a render job."""
+    def bad(msg):
+        raise HTTPException(400, msg)
+    if "input_type" in body and body["input_type"] not in ("hum", "song", "sung", "voice_sample"):
+        bad("Unknown input type")
+    if "separation_method" in body and body["separation_method"] not in METHODS:
+        bad("Unknown separation method")
+    if "transpose" in body:
+        t = body["transpose"]
+        if not isinstance(t, (int, float)) or isinstance(t, bool) or not -24 <= t <= 24:
+            bad("Transpose must be between -24 and +24 semitones")
+        body["transpose"] = int(round(t))
+    if "voice" in body:
+        v = body["voice"]
+        if not isinstance(v, dict) or v.get("gender") not in GENDERS or v.get("age") not in AGES:
+            bad("Voice needs a valid gender and age")
+        if v.get("voice_id") not in (None, *[b["id"] for b in VOICE_BANK]):
+            bad("Unknown voice")
+        if v.get("engine", "formant") not in ENGINES:
+            bad("Unknown engine")
+    if "lyrics" in body:
+        L = body["lyrics"]
+        if not isinstance(L, dict) or not isinstance(L.get("text", ""), str) or L.get("language") not in LANGUAGES:
+            bad("Lyrics need text and a supported language")
+        if L.get("dialect", "standard") not in ("standard", "literary"):
+            bad("Unknown dialect")
+    if "flavour" in body:
+        f = body["flavour"]
+        if not isinstance(f, dict):
+            bad("Flavour must be an object")
+        for c in [*CONTROLS, "creative"]:
+            if c in f:
+                if not isinstance(f[c], (int, float)) or isinstance(f[c], bool):
+                    bad(f"{c} must be a number")
+                f[c] = float(min(100, max(0, f[c])))
+        if f.get("tuning", "natural") not in ("original", "natural", "hard"):
+            bad("Unknown tuning")
+        if f.get("scale") not in (None, *SCALES):
+            bad("Unknown scale")
+        try:
+            f["seed"] = int(f.get("seed", 1234))
+        except (TypeError, ValueError):
+            bad("Seed must be a whole number")
+
+
 @app.put("/api/projects/{pid}")
 def update_project(pid: str, body: dict):
     proj = _proj(pid)
+    _validate_update(body)
+    old_lyrics = proj.get("lyrics")
     for k, v in body.items():
         if k in ALLOWED_UPDATE:
             proj[k] = v
     if "reference_use" in body and proj.get("reference"):
         proj["reference"]["use"] = bool(body["reference_use"])
-    if "lyrics" in body and proj.get("performance"):
+    # re-fit syllables only when the lyrics really changed (keeps lyric edits made on single notes)
+    if "lyrics" in body and proj.get("performance") and body["lyrics"] != old_lyrics:
         service.apply_lyrics(proj)
     service.save_project(proj)
     return proj
+
+
+def _validate_performance(body: dict):
+    def bad(msg):
+        raise HTTPException(400, msg)
+    if "tempo" in body:
+        bpm = body["tempo"].get("bpm") if isinstance(body["tempo"], dict) else None
+        if not isinstance(bpm, (int, float)) or not 20 <= bpm <= 400:
+            bad("Tempo must be between 20 and 400 BPM")
+    if "tempo_map" in body:
+        tm = body["tempo_map"]
+        if not isinstance(tm, list) or any(not isinstance(c, dict) or not 20 <= float(c.get("bpm", 0)) <= 400 or float(c.get("time", -1)) < 0 for c in tm):
+            bad("Every tempo change needs a time >= 0 and 20-400 BPM")
+    if "key" in body:
+        k = body["key"]
+        if not isinstance(k, dict) or k.get("mode") not in ("major", "minor") or k.get("tonic_pc") not in range(12):
+            bad("Key needs a tonic (0-11) and major or minor")
+    if "notes" in body:
+        if not isinstance(body["notes"], list) or len(body["notes"]) > 20000:
+            bad("Notes must be a list")
+        for n in body["notes"]:
+            try:
+                ok = float(n["start"]) >= 0 and 0.01 <= float(n["dur"]) <= 60 and 0 <= float(n["midi"]) <= 127 and isinstance(n["id"], str)
+            except (KeyError, TypeError, ValueError):
+                ok = False
+            if not ok:
+                bad("Each note needs an id, start >= 0, a duration of 10 ms to 60 s and a pitch of 0-127")
 
 
 @app.put("/api/projects/{pid}/performance")
@@ -126,6 +221,7 @@ def update_performance(pid: str, body: dict):
     if not proj.get("performance"):
         raise HTTPException(400, "Analyse first")
     perf = proj["performance"]
+    _validate_performance(body)
     for k in ("notes", "tempo", "key", "tempo_map"):
         if k in body:
             perf[k] = body[k]
@@ -176,9 +272,11 @@ async def upload_audio(pid: str, file: UploadFile = File(...), role: str = Form(
         info = service.store_audio(pid, file.filename or "upload.wav", data, role)
     except AudioImportError as e:
         raise HTTPException(400, str(e))
-    if role == "input":
+    if role == "input":  # a new recording replaces everything derived from the old one
         proj["input"] = info
         proj["performance"] = None
+        proj["separation"] = None
+        proj["source_timbre"] = None
     else:
         from .audio_io import load_audio
         x, sr = load_audio(service.pdir(pid) / "reference_decoded.wav")
@@ -385,7 +483,17 @@ def cancel(job_id: str):
     return j.to_dict()
 
 
-_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+def _ui_dir() -> Path:
+    """Built UI: KURALKOODU_UI_DIR, else inside a packaged app, else the repo's frontend/dist."""
+    import sys
+    if os.environ.get("KURALKOODU_UI_DIR"):
+        return Path(os.environ["KURALKOODU_UI_DIR"])
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent)) / "ui"
+    return Path(__file__).resolve().parents[2] / "frontend" / "dist"
+
+
+_dist = _ui_dir()
 if _dist.exists():
     app.mount("/", StaticFiles(directory=str(_dist), html=True), name="ui")
 

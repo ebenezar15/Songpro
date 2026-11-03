@@ -61,9 +61,9 @@ export async function waitJob(job: Job, onTick: (j: Job) => void): Promise<Job> 
 export const NOTE_NAMES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
 export const midiName = (m: number) => `${NOTE_NAMES[((Math.round(m) % 12) + 12) % 12]}${Math.floor(Math.round(m) / 12) - 1}`;
 
-export const playUrl = (pid: string, src: string, v = 0) => `/api/projects/${pid}/play/${encodeURIComponent(src)}?v=${v}`;
-export const peaksOf = (pid: string, src: string, n: number, v = 0) =>
-  fetch(`/api/projects/${pid}/peaks/${encodeURIComponent(src)}?n=${n}&v=${v}`).then(j<{ duration: number; min: number[]; max: number[] }>);
+export const playUrl = (pid: string, src: string, v: string | number = 0) => `/api/projects/${pid}/play/${encodeURIComponent(src)}?v=${encodeURIComponent(String(v))}`;
+export const peaksOf = (pid: string, src: string, n: number, v: string | number = 0) =>
+  fetch(`/api/projects/${pid}/peaks/${encodeURIComponent(src)}?n=${n}&v=${encodeURIComponent(String(v))}`).then(j<{ duration: number; min: number[]; max: number[] }>);
 export const separateApi = {
   run: (pid: string, method: string, strength: number) =>
     fetch(`/api/projects/${pid}/separate`, { method: "POST", headers: H, body: JSON.stringify({ method, strength }) }).then(j<Job>),

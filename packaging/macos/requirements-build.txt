@@ -1,0 +1,3 @@
+pyinstaller==6.16.0
+pywebview==6.1
+pillow==11.3.0

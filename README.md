@@ -8,6 +8,20 @@ and Kuralkoodu separates the vocal from the music, so you can export either part
 Songs of 4 minutes and longer are supported end to end. Everything runs locally: no uploads,
 no telemetry, and no model downloads unless you agree to them.
 
+## Install on a Mac
+
+Download `Kuralkoodu-<version>-macOS-arm64.dmg` (Apple Silicon) or `-x86_64.dmg` (Intel) from the
+**macOS app** workflow run's artifacts on GitHub (or from a release, for `v*` tags). Open it, drag
+Kuralkoodu into Applications, then right-click > Open the first time: the build is ad-hoc signed,
+not notarised with an Apple Developer ID, so macOS asks once. If macOS calls it "damaged", run
+`xattr -dr com.apple.quarantine /Applications/Kuralkoodu.app`. It needs macOS 11 or later.
+
+The app is the same engine and studio as below, in a native window (WKWebView). It bundles Python,
+so nothing else needs installing. Build it yourself on a Mac with `packaging/macos/build.sh`; the build
+runs a packaged self-test (import → analyse → render → separate → export) before making the .dmg.
+
+## Run from source
+
 ```bash
 ./run.sh            # creates .venv, installs pinned deps, builds the UI, serves http://127.0.0.1:8765
 ```
@@ -33,7 +47,7 @@ Tests: `cd backend && python -m pytest -q`. Measurements: `python backend/script
 | Licence registry + Commercial Mode export block | done |
 | Projects saved to `~/Kuralkoodu/projects` (analysis cached by audio hash) | done |
 | Neural engines (SoulX-Singer, Seed-VC), RMVPE/FCPE, Demucs | adapters + consent flow; **needs wiring and testing on your Mac** (Milestone 4) |
-| Tauri desktop packaging | not started (Milestone 7) |
+| macOS app (.app + .dmg, Apple Silicon and Intel) built by GitHub Actions with PyInstaller + pywebview; packaged self-test | done (unsigned: Developer ID signing and notarisation need your Apple account) |
 
 ## Tamil: how "clean regional pronunciation" is handled
 
@@ -169,4 +183,4 @@ samples/           renders + acceptance report
 
 1. Run `/api/system` and the spike on your Mac (chip, RAM, MPS), then pin and wire SoulX-Singer and measure it.
 2. Decide on Seed-VC after confirming its upstream licence.
-3. Tauri packaging with the Python backend as a sidecar.
+3. Sign and notarise the Mac app with your Apple Developer ID (removes the first-launch warning).
