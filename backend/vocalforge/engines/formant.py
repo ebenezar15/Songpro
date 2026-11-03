@@ -151,67 +151,93 @@ class FormantSingerEngine(VocalEngine):
 
         K = int(HARM_CUTOFF / max(60.0, f0.min())) + 1
         K = min(K, 200)
-        k = np.arange(1, K + 1)[None, :]
-        freqs = f0[:, None] * k
+        k = np.arange(1, K + 1, dtype=np.float64)[None, :]
         tilt = 1.0 / k ** (0.55 + 0.45 * (1 - bright) + 0.6 * breath)
-        H = _envelope(freqs, P["F"], P["B"], P["nasal"], P["lp"], bright, scale)
-        A = H * tilt
-        A[freqs > HARM_CUTOFF] = 0
-        # frame-wise level normalisation (partial: keeps natural vowel differences)
-        norm = np.sqrt((A ** 2).sum(axis=1)) + 1e-9
-        A = A / norm[:, None] ** 0.85
-        A *= voiced_amp[:, None]
-        progress(0.25, "Harmonic amplitudes ready")
+        # harmonic amplitudes, computed in frame blocks (memory stays flat for 4+ minute songs)
+        A = np.zeros((nfr, K), np.float32)
+        BLK = 4000
+        for b0 in range(0, nfr, BLK):
+            b1 = min(nfr, b0 + BLK)
+            fr_ = f0[b0:b1, None] * k
+            Ab = _envelope(fr_, P["F"][b0:b1], P["B"][b0:b1], P["nasal"][b0:b1], P["lp"][b0:b1], bright, scale) * tilt
+            Ab[fr_ > HARM_CUTOFF] = 0
+            # frame-wise level normalisation (partial: keeps natural vowel differences)
+            Ab /= (np.sqrt((Ab ** 2).sum(axis=1)) + 1e-9)[:, None] ** 0.85
+            A[b0:b1] = Ab * voiced_amp[b0:b1, None]
+        progress(0.2, "Harmonic amplitudes ready")
 
-        # sample-level synthesis in chunks
+        # sample-level synthesis in chunks; phase carried across chunks
         n = nfr * HOP
-        fpos = np.arange(n) / HOP
-        f0s = np.interp(fpos, np.arange(nfr), f0)
-        phase = 2 * np.pi * np.cumsum(f0s) / SR
-        y = np.zeros(n, np.float64)
+        frame_idx = np.arange(nfr)
+        y = np.zeros(n, np.float32)
+        phase_all = np.zeros(n, np.float64)
         chunk = 9600
+        carry = 0.0
         for c0 in range(0, n, chunk):
             if cancel():
                 raise Cancelled()
             c1 = min(n, c0 + chunk)
-            fp = fpos[c0:c1]
+            fp = np.arange(c0, c1) / HOP
+            f0s = np.interp(fp, frame_idx, f0)
+            ph0 = carry + 2 * np.pi * np.cumsum(f0s) / SR
+            carry = ph0[-1] % (2 * np.pi * 2)  # keep 4π periodicity for the period-doubling grit
+            phase_all[c0:c1] = ph0
             i0 = np.minimum(fp.astype(int), nfr - 2)
-            w = (fp - i0)[:, None]
+            w = (fp - i0)[:, None].astype(np.float32)
             Ac = A[i0] * (1 - w) + A[i0 + 1] * w
             active = np.nonzero(Ac.max(axis=0) > 1e-6)[0]
             if active.size:
-                ph = phase[c0:c1, None] * (active[None, :] + 1)
+                ph = ph0[:, None] * (active[None, :] + 1)
                 y[c0:c1] = np.einsum("ij,ij->i", Ac[:, active], np.sin(ph))
-            progress(0.25 + 0.5 * c1 / n, "Synthesising harmonics")
+            if c0 % (chunk * 20) == 0:
+                progress(0.2 + 0.55 * c1 / n, "Synthesising harmonics")
+        del A
+        phase = phase_all
 
         # grit: period doubling + saturation
         if grit > 0:
             sub = 1 - 0.35 * grit * (0.5 + 0.5 * np.cos(phase / 2))
             y = y * sub
             drive = 1 + 5 * grit
-            y = np.tanh(drive * y / (np.max(np.abs(y)) + 1e-9)) / np.tanh(drive) * np.max(np.abs(y))
+            pk = np.max(np.abs(y)) + 1e-9
+            y = (np.tanh(drive * y / pk) / np.tanh(drive) * pk).astype(np.float32)
 
-        # noise streams (aspiration + frication), shaped in the STFT domain
+        # noise streams (aspiration + frication), shaped in the STFT domain block by block
+        progress(0.78, "Breath and consonant noise")
         nper = 1024
-        noise = rng.normal(0, 1, n + nper)
-        f_axis, t_axis, Z = stft(noise, fs=SR, nperseg=nper, noverlap=nper - HOP)
-        nF = Z.shape[1]
-        fi = np.clip((t_axis * 200).astype(int), 0, nfr - 1)
+        noise = rng.normal(0, 1, n).astype(np.float32)
+        yn = np.zeros(n, np.float32)
+        MARGIN = 10 * HOP              # frame-aligned margin: segment interiors equal a full-length STFT
+        SEG = 4500 * HOP               # ~22.5 s per segment
+        f_axis = np.fft.rfftfreq(nper, 1 / SR)
         fr = f_axis[None, :]
-        Hn = _envelope(np.broadcast_to(fr, (nF, len(f_axis))).copy(), P["F"][fi], P["B"][fi] * 1.6,
-                       P["nasal"][fi], np.full(nF, 20000.0), bright, scale)
-        Hn = Hn / (Hn.max(axis=1, keepdims=True) + 1e-9)
-        asp = Hn * (breath * 0.6 * amp_s[fi] * np.clip(P["vg"][fi], 0, 1))[:, None]
-        fric_shape = np.exp(-0.5 * ((fr - P["nc"][fi][:, None]) / (P["nb"][fi][:, None] / 2)) ** 2)
-        fric = fric_shape * (0.5 * P["ng"][fi] * np.maximum(amp_s[fi], 0.3 * (P["ng"][fi] > 0)))[:, None]
         hf_roll = 1 / np.sqrt(1 + (fr / 9000.0) ** 4)
-        Zs = Z * ((asp + fric) * hf_roll).T * 0.045
-        _, yn = istft(Zs, fs=SR, nperseg=nper, noverlap=nper - HOP)
-        yn = np.pad(yn, (0, max(0, n - len(yn))))[:n]
+        for s0 in range(0, n, SEG):
+            if cancel():
+                raise Cancelled()
+            s1 = min(n, s0 + SEG)
+            a0, a1 = max(0, s0 - MARGIN), min(n, s1 + MARGIN)
+            _, t_axis, Z = stft(noise[a0:a1], fs=SR, nperseg=nper, noverlap=nper - HOP)
+            fi = np.clip(((a0 / SR + t_axis) * 200).astype(int), 0, nfr - 1)
+            m = len(fi)
+            Hn = _envelope(np.broadcast_to(fr, (m, len(f_axis))).copy(), P["F"][fi], P["B"][fi] * 1.6,
+                           P["nasal"][fi], np.full(m, 20000.0), bright, scale)
+            Hn /= Hn.max(axis=1, keepdims=True) + 1e-9
+            asp = Hn * (breath * 0.6 * amp_s[fi] * np.clip(P["vg"][fi], 0, 1))[:, None]
+            del Hn
+            fric_shape = np.exp(-0.5 * ((fr - P["nc"][fi][:, None]) / (P["nb"][fi][:, None] / 2)) ** 2)
+            fric = fric_shape * (0.5 * P["ng"][fi] * np.maximum(amp_s[fi], 0.3 * (P["ng"][fi] > 0)))[:, None]
+            Z *= (((asp + fric) * hf_roll).T * 0.045).astype(Z.dtype)
+            del asp, fric, fric_shape
+            _, seg = istft(Z, fs=SR, nperseg=nper, noverlap=nper - HOP)
+            seg = np.pad(seg, (0, max(0, (a1 - a0) - len(seg))))
+            yn[s0:s1] = seg[s0 - a0: s0 - a0 + (s1 - s0)]
+            progress(0.78 + 0.2 * s1 / n, "Breath and consonant noise")
+        del noise
         # aspiration is pitch-synchronous in real voices
-        yn *= 0.75 + 0.25 * np.cos(phase)
+        yn *= (0.75 + 0.25 * np.cos(phase)).astype(np.float32)
         out = 0.22 * y + yn
         # gentle DC / rumble removal
-        out = out - uniform_filter1d(out, 1920)
+        out -= uniform_filter1d(out, 1920)
         progress(1.0, "Formant render done")
         return out.astype(np.float32), SR

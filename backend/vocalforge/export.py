@@ -17,7 +17,7 @@ from .audio_io import resample
 
 HEADROOM_PEAK = 10 ** (-1.0 / 20)  # keep true sample peaks <= -1 dBFS
 STEM_LABELS = {"lead": "LeadDry", "lead_processed": "LeadProcessed", "doubles": "Doubles",
-               "harmonies": "Harmonies", "adlibs": "AdLibs"}
+               "harmonies": "Harmonies", "adlibs": "AdLibs", "instrumental": "Instrumental"}
 
 
 # ------------------------------------------------------------------ WAV
@@ -210,14 +210,15 @@ def build_export(stems: dict, native_sr: int, opts: dict, session: dict, notes, 
     include = opts.get("stems") or list(stems.keys())
     rendered = {}
     for name, x in stems.items():
-        if name in include or name == "lead":
+        if name in include or name in ("lead", "instrumental"):
             rendered[name] = resample(np.asarray(x, np.float32), native_sr, sr)
     if opts.get("processed"):
         rendered["lead_processed"] = process_lead(rendered["lead"].astype(np.float64), sr).astype(np.float32)
-    # sample alignment: pad all to identical length from the same zero point
+    # sample alignment: pad all to identical length from the same zero point (never truncate)
     L = max(len(v) for v in rendered.values())
     for k in rendered:
-        rendered[k] = np.pad(rendered[k], (0, L - len(rendered[k])))
+        v = rendered[k]
+        rendered[k] = np.pad(v, ((0, L - len(v)),) + ((0, 0),) * (v.ndim - 1))
     # one common gain so nothing clips (never boosts)
     peak = max(float(np.max(np.abs(v))) for v in rendered.values())
     gain = min(1.0, HEADROOM_PEAK / peak) if peak > 0 else 1.0
@@ -231,7 +232,11 @@ def build_export(stems: dict, native_sr: int, opts: dict, session: dict, notes, 
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for name, x in rendered.items():
             y = x.astype(np.float64) * gain
-            if channels == 2:
+            if y.ndim == 2 and channels == 1:
+                y = y.mean(axis=1)
+            elif y.ndim == 2 and y.shape[1] == 1:
+                y = y[:, 0]
+            if channels == 2 and y.ndim == 1:
                 y = np.stack([y, y], axis=1)
             fn = stem_filename(song, name, v.get("gender", "female"), v.get("age", "young_adult"), bpm, key_short, sr, bit_depth)
             data = wav_bytes(y, sr, bit_depth, bwf=bwf, time_reference=tref, description=f"VocalForge {name}")

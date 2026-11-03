@@ -28,7 +28,7 @@ REGISTRY = {
         "source": "https://github.com/CNChTu/FCPE", "size_mb": 40, "notes": "Optional fast neural F0."},
     "demucs": {
         "name": "Demucs (Meta)", "code": "MIT", "weights": "MIT (htdemucs)", "commercial": "allowed",
-        "source": "https://github.com/facebookresearch/demucs", "size_mb": 320,
+        "source": "https://github.com/facebookresearch/demucs", "size_mb": 80,
         "notes": "Vocal / accompaniment separation. The repository is archived; the code still works with pinned torch."},
 }
 

@@ -38,14 +38,27 @@ def midi_name(m: float) -> str:
 
 
 # --------------------------------------------------------------------------- F0
+BLOCK_FRAMES = 2000  # frames per block: keeps memory flat for long (4 min+) songs
+
+
 def yin_f0(x: np.ndarray, sr: int, fmin=60.0, fmax=1100.0, hop_s=HOP_S, frame=1024, threshold=0.12):
-    """Vectorised YIN. Returns times, f0 (0 = unvoiced), periodicity confidence (0..1)."""
+    """Vectorised YIN, processed in blocks. Returns times, f0 (0 = unvoiced), periodicity confidence (0..1)."""
     hop = int(round(hop_s * sr))
     pad = frame // 2
     xp = np.pad(x.astype(np.float64), (pad, pad + frame))
     n_frames = 1 + (len(x)) // hop
-    idx = np.arange(frame)[None, :] + hop * np.arange(n_frames)[:, None]
-    frames = xp[idx]
+    f0 = np.zeros(n_frames)
+    conf = np.zeros(n_frames)
+    for b0 in range(0, n_frames, BLOCK_FRAMES):
+        b1 = min(n_frames, b0 + BLOCK_FRAMES)
+        idx = np.arange(frame)[None, :] + hop * np.arange(b0, b1)[:, None]
+        f0[b0:b1], conf[b0:b1] = _yin_block(xp[idx], sr, fmin, fmax, frame, threshold)
+    times = np.arange(n_frames) * hop / sr
+    return times, f0, conf
+
+
+def _yin_block(frames, sr, fmin, fmax, frame, threshold):
+    n_frames = frames.shape[0]
     w = frame // 2  # integration window
     tau_max = min(int(sr / fmin) + 2, w)
     tau_min = max(2, int(sr / fmax))
@@ -88,8 +101,7 @@ def yin_f0(x: np.ndarray, sr: int, fmin=60.0, fmax=1100.0, hop_s=HOP_S, frame=10
         conf[i] = float(np.clip(1.0 - val, 0, 1))
         if val < 0.35:
             f0[i] = sr / (tau + shift)
-    times = np.arange(n_frames) * hop / sr
-    return times, f0, conf
+    return f0, conf
 
 
 def frame_rms_db(x: np.ndarray, sr: int, hop_s=HOP_S, win_s=0.03):
@@ -97,8 +109,11 @@ def frame_rms_db(x: np.ndarray, sr: int, hop_s=HOP_S, win_s=0.03):
     win = int(round(win_s * sr))
     n_frames = 1 + len(x) // hop
     xp = np.pad(x.astype(np.float64), (win // 2, win))
-    idx = np.arange(win)[None, :] + hop * np.arange(n_frames)[:, None]
-    rms = np.sqrt(np.mean(xp[idx] ** 2, axis=1) + 1e-12)
+    rms = np.empty(n_frames)
+    for b0 in range(0, n_frames, BLOCK_FRAMES * 4):
+        b1 = min(n_frames, b0 + BLOCK_FRAMES * 4)
+        idx = np.arange(win)[None, :] + hop * np.arange(b0, b1)[:, None]
+        rms[b0:b1] = np.sqrt(np.mean(xp[idx] ** 2, axis=1) + 1e-12)
     return 20 * np.log10(rms + 1e-9)
 
 
@@ -108,10 +123,16 @@ def onset_envelope(x: np.ndarray, sr: int, hop_s=HOP_S):
     n_fft = 1024
     n_frames = 1 + len(x) // hop
     xp = np.pad(x.astype(np.float64), (n_fft // 2, n_fft))
-    idx = np.arange(n_fft)[None, :] + hop * np.arange(n_frames)[:, None]
-    S = np.abs(np.fft.rfft(xp[idx] * np.hanning(n_fft), axis=1))
-    L = np.log1p(100 * S)
-    flux = np.maximum(np.diff(L, axis=0, prepend=L[:1]), 0).sum(axis=1)
+    win = np.hanning(n_fft)
+    flux = np.zeros(n_frames)
+    prev = None
+    for b0 in range(0, n_frames, BLOCK_FRAMES):
+        b1 = min(n_frames, b0 + BLOCK_FRAMES)
+        idx = np.arange(n_fft)[None, :] + hop * np.arange(b0, b1)[:, None]
+        L = np.log1p(100 * np.abs(np.fft.rfft(xp[idx] * win, axis=1))).astype(np.float32)
+        first = L[:1] if prev is None else prev
+        flux[b0:b1] = np.maximum(np.diff(L, axis=0, prepend=first), 0).sum(axis=1)
+        prev = L[-1:]
     flux = flux - uniform_filter1d(flux, 30)
     return np.maximum(flux, 0)
 
@@ -256,7 +277,9 @@ def estimate_tempo(env: np.ndarray, note_onsets: list[float], fps=100.0, lo=60.0
     e = e - e.mean()
     if n < fps * 2 or np.allclose(e, 0):
         return 120.0, 0.0, 0.0
-    ac = np.correlate(e, e, "full")[n - 1:]
+    nfft = 1 << int(np.ceil(np.log2(2 * n)))
+    E = np.fft.rfft(e, nfft)
+    ac = np.fft.irfft(E * np.conj(E), nfft)[:n]
     ac /= ac[0] + 1e-12
     cands = []
     for bpm in np.arange(lo, hi + 0.5, 0.5):

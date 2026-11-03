@@ -70,7 +70,7 @@ def save_project(proj: dict):
     d = pdir(proj["id"])
     d.mkdir(parents=True, exist_ok=True)
     tmp = d / "project.json.tmp"
-    tmp.write_text(json.dumps(proj, indent=1, ensure_ascii=False))
+    tmp.write_text(json.dumps(proj, indent=1, ensure_ascii=False, default=float))
     tmp.replace(d / "project.json")
 
 
@@ -93,6 +93,38 @@ def file_hash(path: Path) -> str:
     return h.hexdigest()[:16]
 
 
+def write_play_copy(path: Path, x: np.ndarray, sr: int):
+    """16-bit copy for in-app playback (half the size of float; long songs load faster in the browser)."""
+    x = np.asarray(x, np.float32)
+    pk = float(np.max(np.abs(x))) if x.size else 0.0
+    sf.write(str(path), x / pk if pk > 1.0 else x, sr, subtype="PCM_16")
+
+
+def peaks(path: Path, n: int = 2000) -> dict:
+    """Min/max waveform overview (cached next to the file)."""
+    cache = path.with_suffix(f".peaks{n}.json")
+    if cache.exists() and cache.stat().st_mtime >= path.stat().st_mtime:
+        return json.loads(cache.read_text())
+    info = sf.info(str(path))
+    total = info.frames
+    step = max(1, total // n)
+    mins, maxs = [], []
+    with sf.SoundFile(str(path)) as f:
+        while True:
+            blk = f.read(step * 64, dtype="float32", always_2d=True)
+            if not len(blk):
+                break
+            m = blk.mean(axis=1)
+            k = len(m) // step
+            if k:
+                seg = m[: k * step].reshape(k, step)
+                mins += seg.min(axis=1).round(4).tolist()
+                maxs += seg.max(axis=1).round(4).tolist()
+    out = {"duration": total / info.samplerate, "min": mins, "max": maxs}
+    cache.write_text(json.dumps(out))
+    return out
+
+
 def store_audio(pid: str, filename: str, data: bytes, role: str) -> dict:
     d = pdir(pid)
     ext = Path(filename).suffix.lower() or ".wav"
@@ -103,6 +135,14 @@ def store_audio(pid: str, filename: str, data: bytes, role: str) -> dict:
     x, sr = load_audio(dest)  # validates decoding now (never fail silently later)
     # keep a decoded float copy for fast playback / processing
     write_preview_wav(d / f"{role}_decoded.wav", to_mono(x), sr)
+    write_play_copy(d / f"{role}_play.wav", x, sr)
+    if role == "input":  # new input invalidates old separation / renders
+        for sub in ("separation", "renders"):
+            if (d / sub).exists():
+                shutil.rmtree(d / sub)
+        for f in ("separated_decoded.wav", "analysis.json"):
+            if (d / f).exists():
+                (d / f).unlink()
     return {"file": dest.name, "original_name": filename, "sample_rate": sr, "channels": x.shape[1],
             "duration": round(len(x) / sr, 3), "hash": file_hash(dest)}
 
@@ -113,6 +153,11 @@ def run_analysis(job, pid: str, force=False, use_separated=False):
     if not proj.get("input"):
         raise ValueError("Import audio first.")
     d = pdir(pid)
+    if proj.get("input_type") == "song":
+        use_separated = True
+        if not (d / "separated_decoded.wav").exists():
+            job.update(0.01, "Full song: separating the vocal first")
+            run_separation(job, pid, proj.get("separation_method") or "builtin", progress_scale=0.6)
     src = d / ("separated_decoded.wav" if use_separated and (d / "separated_decoded.wav").exists() else "input_decoded.wav")
     key = file_hash(src)
     cache = d / "analysis.json"
@@ -123,7 +168,8 @@ def run_analysis(job, pid: str, force=False, use_separated=False):
             return {"cached": True}
     x, sr = load_audio(src)
     t0 = time.time()
-    res = analyze(x, sr, progress=lambda f, m: (job.update(f * 0.95, m), _check(job)))
+    base = job.progress
+    res = analyze(x, sr, progress=lambda f, m: (job.update(base + (0.95 - base) * f, m), _check(job)))
     out = res.to_dict()
     out["source_hash"] = key
     out["source"] = src.name
@@ -241,7 +287,8 @@ def render_project(job, pid: str, mode="preview", start_bar=0, bars=8):
     d = pdir(pid)
     source = None
     if engine.id in ("dsp-convert",):
-        x, sr = load_audio(d / "input_decoded.wav")
+        src_file = d / ("separated_decoded.wav" if (d / "separated_decoded.wav").exists() else "input_decoded.wav")
+        x, sr = load_audio(src_file)
         x = to_mono(x)
         if mode == "preview":
             x = x[int(offset * sr): int((offset + bars * bar_s) * sr)]
@@ -283,12 +330,8 @@ def render_project(job, pid: str, mode="preview", start_bar=0, bars=8):
     for k, v in stems.items():
         write_preview_wav(out / f"{k}.wav", v, sr_out)
         hashes[k] = hashlib.sha256(np.asarray(v, np.float32).tobytes()).hexdigest()[:16]
-    # original slice for A/B
-    xin, srin = load_audio(d / "input_decoded.wav")
-    xin = to_mono(xin)
-    if mode == "preview":
-        xin = xin[int(offset * srin): int((offset + bars * bar_s) * srin)]
-    write_preview_wav(out / "original.wav", xin, srin)
+    for k, v in stems.items():
+        write_play_copy(out / f"{k}_play.wav", v, sr_out)
     meta = {"mode": mode, "engine": engine.info(), "seed": seed, "voice": voice, "flavour": proj["flavour"],
             "changes": changes, "offset_s": round(offset, 4), "bars": bars if mode == "preview" else None,
             "sample_rate": sr_out, "duration_s": round(L / sr_out, 3), "audio_sha256": hashes,
@@ -312,6 +355,86 @@ def _shift_analysis(a, start, end):
             "loudness_db": list(np.asarray(a["loudness_db"])[m]), "duration": end - start}
 
 
+# -------------------------------------------------------------- separation
+def run_separation(job, pid: str, method: str = "builtin", strength: float = 1.0, progress_scale: float = 1.0):
+    from .separation import separate
+    proj = load_project(pid)
+    if not proj.get("input"):
+        raise ValueError("Import a song first.")
+    d = pdir(pid)
+    x, sr = load_audio(d / proj["input"]["file"])  # original channels (stereo helps)
+    t0 = time.time()
+    base = job.progress
+    voc, inst, info = separate(x, sr, method, progress=lambda f, m: (job.update(base + progress_scale * 0.95 * f, m), _check(job)),
+                               cancel=job.cancelled, strength=strength)
+    out = d / "separation"
+    out.mkdir(exist_ok=True)
+    sf.write(str(out / "vocals.wav"), voc, sr, subtype="FLOAT")
+    sf.write(str(out / "instrumental.wav"), inst, sr, subtype="FLOAT")
+    write_play_copy(out / "vocals_play.wav", voc, sr)
+    write_play_copy(out / "instrumental_play.wav", inst, sr)
+    write_preview_wav(d / "separated_decoded.wav", to_mono(voc), sr)
+    info.update(runtime_s=round(time.time() - t0, 2), duration_s=round(len(x) / sr, 3), strength=strength,
+                vocal_peak_dbfs=round(20 * np.log10(np.max(np.abs(voc)) + 1e-12), 2),
+                instrumental_peak_dbfs=round(20 * np.log10(np.max(np.abs(inst)) + 1e-12), 2), time=time.time())
+    proj = load_project(pid)
+    proj["separation"] = json.loads(json.dumps(info, default=float))
+    save_project(proj)
+    return info
+
+
+def export_separation(job, pid: str, opts: dict):
+    """Export the isolated vocal and/or instrumental. One stem -> .wav, several -> .zip."""
+    import io
+    import zipfile
+    from .audio_io import resample
+    from .export import _slug, wav_bytes
+    proj = load_project(pid)
+    d = pdir(pid) / "separation"
+    if not (d / "vocals.wav").exists():
+        raise ValueError("Separate the song first.")
+    stems = opts.get("stems") or ["vocals"]
+    sr = int(opts.get("sample_rate") or proj["separation"]["sample_rate"])
+    bd = str(opts.get("bit_depth", "24"))
+    chans = opts.get("channels", "original")
+    song = _slug(proj.get("song_name") or proj["name"])
+    srs = f"{sr / 1000:g}k"
+    tag = "32f" if bd == "32f" else f"{bd}b"
+    label = {"vocals": "VocalsIsolated", "instrumental": "Instrumental"}
+    data = {}
+    for st in stems:
+        y, ssr = sf.read(str(d / f"{st}.wav"), dtype="float32", always_2d=True)
+        y = resample(y, ssr, sr)
+        if chans == 1:
+            y = y.mean(axis=1, keepdims=True)
+        elif chans == 2 and y.shape[1] == 1:
+            y = np.repeat(y, 2, axis=1)
+        data[st] = y
+        job.update(0.2 + 0.3 * len(data) / len(stems), f"Prepared {st}")
+    # never normalise; only if 24-bit would clip, apply one common gain to every stem
+    peak = max(float(np.max(np.abs(v))) for v in data.values())
+    gain = 1.0 if bd == "32f" or peak <= 1.0 else 1.0 / peak
+    files = {}
+    for st, y in data.items():
+        files[f"{song}_{label[st]}_{srs}{tag}.wav"] = wav_bytes(y * gain, sr, bd)
+    ex = pdir(pid) / "exports"
+    ex.mkdir(exist_ok=True)
+    report = {"stems": stems, "sample_rate": sr, "bit_depth": bd, "gain_applied_db": round(20 * np.log10(gain), 2),
+              "method": proj["separation"].get("method"), "frames": len(next(iter(data.values())))}
+    if len(files) == 1:
+        name, b = next(iter(files.items()))
+        (ex / name).write_bytes(b)
+        return {"file": name, "report": report}
+    name = f"{song}_Separation_{time.strftime('%Y%m%d-%H%M%S')}.zip"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for fn, b in files.items():
+            z.writestr(fn, b)
+        z.writestr(f"{song}_Separation.json", json.dumps({**report, "separation": proj["separation"]}, indent=2, default=str))
+    (ex / name).write_bytes(buf.getvalue())
+    return {"file": name, "report": report}
+
+
 # ------------------------------------------------------------------ export
 def export_project(job, pid: str, opts: dict):
     proj = load_project(pid)
@@ -330,6 +453,11 @@ def export_project(job, pid: str, opts: dict):
     for stem in meta.get("audio_sha256", {}):
         y, sr = sf.read(str(d / f"{stem}.wav"), dtype="float32")
         stems[stem] = y
+    sep = pdir(pid) / "separation" / "instrumental.wav"
+    if opts.get("include_instrumental") and sep.exists():
+        from .audio_io import resample
+        y, isr = sf.read(str(sep), dtype="float32", always_2d=True)
+        stems["instrumental"] = resample(y, isr, sr)
     perf, _ = flavour_preview(proj)
     session = {
         "app": "VocalForge", "app_version": __version__, "project": proj["name"], "created": time.strftime("%Y-%m-%dT%H:%M:%S"),

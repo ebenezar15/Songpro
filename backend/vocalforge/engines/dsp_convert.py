@@ -58,33 +58,51 @@ class DspConvertEngine(VocalEngine):
         x = resample(np.asarray(x, np.float32), sr, self.native_sr).astype(np.float64)
         semis = float(plan.get("transpose", 0))
         alpha = float(plan["voice"]["formant_scale"]) / float(plan.get("source_formant_scale", 1.0))
+        breath = float(plan.get("timbre", {}).get("breathiness", 0))
+        # long songs: 20 s blocks with 0.5 s raised-cosine crossfades
+        sr2 = self.native_sr
+        B, O = 20 * sr2, sr2 // 2
+        out = np.zeros(len(x))
+        wsum = np.zeros(len(x))
+        starts = list(range(0, max(1, len(x)), B))
+        for bi, s0 in enumerate(starts):
+            if cancel():
+                raise Cancelled()
+            a0, a1 = max(0, s0 - O), min(len(x), s0 + B + O)
+            seg = self._convert(x[a0:a1], semis, alpha, breath, seed, bi)
+            w = np.ones(a1 - a0)
+            if a0 > 0:
+                w[:2 * O] = 0.5 - 0.5 * np.cos(np.linspace(0, np.pi, 2 * O))
+            if a1 < len(x):
+                w[-2 * O:] = np.minimum(w[-2 * O:], 0.5 + 0.5 * np.cos(np.linspace(0, np.pi, 2 * O)))
+            out[a0:a1] += seg * w
+            wsum[a0:a1] += w
+            progress((bi + 1) / len(starts), f"Converted {min(len(x), s0 + B) / sr2:.0f} s")
+        out /= np.maximum(wsum, 1e-6)
+        return out.astype(np.float32), self.native_sr
+
+    def _convert(self, x, semis, alpha, breath, seed, block):
         r = 2 ** (semis / 12)
-        progress(0.1, "Pitch shifting")
         y = x
         if abs(semis) > 0.01:
             y = phase_vocoder_stretch(x, r)
-            up, down = 1000, int(round(1000 * r))
-            y = resample_poly(y, up, down)
+            y = resample_poly(y, 1000, int(round(1000 * r)))
         y = np.pad(y, (0, max(0, len(x) - len(y))))[: len(x)]
-        if cancel():
-            raise Cancelled()
-        progress(0.5, "Re-shaping formants")
         _, _, X = stft(x, nperseg=N_FFT, noverlap=N_FFT - HOP)
         _, _, Y = stft(y, nperseg=N_FFT, noverlap=N_FFT - HOP)
         m = min(X.shape[1], Y.shape[1])
         X, Y = X[:, :m], Y[:, :m]
         eX, eY = _envelope(np.abs(X)), _envelope(np.abs(Y))
         bins = np.arange(X.shape[0])
-        target = np.stack([np.interp(bins / alpha, bins, eX[:, j]) for j in range(m)], axis=1)
-        gain = np.clip(target / (eY + 1e-9), 0, 8)
-        breath = float(plan.get("timbre", {}).get("breathiness", 0))
-        Yc = Y * gain
+        src = np.clip(bins / alpha, 0, bins[-1])
+        i0 = np.floor(src).astype(int)
+        i1 = np.minimum(i0 + 1, bins[-1])
+        fw = (src - i0)[:, None]
+        target = eX[i0] * (1 - fw) + eX[i1] * fw
+        Yc = Y * np.clip(target / (eY + 1e-9), 0, 8)
         if breath > 0:
-            rng = np.random.default_rng([int(seed), 5])
+            rng = np.random.default_rng([int(seed), 5, block])
             noise = (rng.normal(size=Yc.shape) + 1j * rng.normal(size=Yc.shape)) * np.abs(Yc) * 0.35 * breath
-            hf = (bins / bins[-1])[:, None] ** 0.5
-            Yc = Yc + noise * hf
+            Yc = Yc + noise * (bins / bins[-1])[:, None] ** 0.5
         _, out = istft(Yc, nperseg=N_FFT, noverlap=N_FFT - HOP)
-        out = np.pad(out, (0, max(0, len(x) - len(out))))[: len(x)]
-        progress(1.0, "Done")
-        return out.astype(np.float32), self.native_sr
+        return np.pad(out, (0, max(0, len(x) - len(out))))[: len(x)]

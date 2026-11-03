@@ -20,7 +20,9 @@ from .flavour import CONTROLS, PRESETS, SCALES
 from .jobs import JobManager
 from .licenses import REGISTRY
 from .lyrics import LANGUAGES, parse_lyrics
-from .separation import separation_status
+import numpy as np
+
+from .separation import METHODS, separation_status
 from .voices import AGE_LABELS, AGES, GENDERS, LICENSE_NOTE, VOICE_BANK, analyse_reference, range_check
 
 app = FastAPI(title="VocalForge", version=__version__)
@@ -63,7 +65,9 @@ def meta():
     return {"engines": [e.info() for e in ENGINES.values()], "licenses": REGISTRY, "presets": PRESETS, "controls": CONTROLS,
             "scales": list(SCALES.keys()), "languages": LANGUAGES, "ages": [{"id": a, "label": AGE_LABELS[a]} for a in AGES],
             "genders": GENDERS, "voice_bank": VOICE_BANK, "voice_bank_note": LICENSE_NOTE,
-            "separation": dict(zip(("available", "status"), separation_status())), "logic_guide": LOGIC_GUIDE}
+            "separation": {k: {**v, **dict(zip(("available", "status"), separation_status(k))), "license": REGISTRY[v["license_id"]]}
+                           for k, v in METHODS.items()},
+            "logic_guide": LOGIC_GUIDE}
 
 
 class ConsentIn(BaseModel):
@@ -98,7 +102,7 @@ def get_project(pid: str):
     return _proj(pid)
 
 
-ALLOWED_UPDATE = {"name", "song_name", "input_type", "lyrics", "voice", "flavour", "commercial_mode", "transpose"}
+ALLOWED_UPDATE = {"name", "song_name", "input_type", "separation_method", "lyrics", "voice", "flavour", "commercial_mode", "transpose"}
 
 
 @app.put("/api/projects/{pid}")
@@ -202,20 +206,73 @@ def get_analysis(pid: str):
     return a
 
 
+class SeparateIn(BaseModel):
+    method: str = "builtin"
+    strength: float = 1.0
+
+
 @app.post("/api/projects/{pid}/separate")
-def separate(pid: str):
+def separate(pid: str, body: SeparateIn | None = None):
+    proj = _proj(pid)
+    body = body or SeparateIn()
+    if body.method not in METHODS:
+        raise HTTPException(400, "Unknown separation method")
+    proj["separation_method"] = body.method
+    service.save_project(proj)
+    return jobs.submit("separation", pid, service.run_separation, pid, body.method, float(np.clip(body.strength, 0.5, 2.0))).to_dict()
+
+
+class SepExportIn(BaseModel):
+    stems: list[str] = ["vocals"]
+    sample_rate: int | None = None
+    bit_depth: str = "24"
+    channels: int | str = "original"
+
+
+@app.post("/api/projects/{pid}/separation/export")
+def separation_export(pid: str, body: SepExportIn):
     _proj(pid)
+    if not body.stems or any(s not in ("vocals", "instrumental") for s in body.stems):
+        raise HTTPException(400, "stems must be vocals and/or instrumental")
+    if body.sample_rate not in (None, 44100, 48000, 96000) or body.bit_depth not in ("24", "32f") or body.channels not in ("original", 1, 2):
+        raise HTTPException(400, "Unsupported export format")
+    return jobs.submit("separation-export", pid, service.export_separation, pid, body.model_dump()).to_dict()
 
-    def run(job, pid):
-        from .audio_io import load_audio, to_mono, write_preview_wav
-        from .separation import separate_vocals
-        job.update(0.1, "Running Demucs (local)")
-        out = separate_vocals(service.pdir(pid) / "input_decoded.wav", service.pdir(pid) / "separation")
-        x, sr = load_audio(out)
-        write_preview_wav(service.pdir(pid) / "separated_decoded.wav", to_mono(x), sr)
-        return {"file": "separated_decoded.wav"}
 
-    return jobs.submit("separation", pid, run, pid).to_dict()
+AUDIO_FILES = {
+    "input": "input_play.wav", "vocals": "separation/vocals_play.wav", "instrumental": "separation/instrumental_play.wav",
+    "reference": "reference_decoded.wav",
+}
+
+
+def _audio_path(pid: str, src: str):
+    d = service.pdir(pid)
+    if src in AUDIO_FILES:
+        f = d / AUDIO_FILES[src]
+        if src == "input" and not f.exists():
+            f = d / "input_decoded.wav"
+        return f
+    parts = src.split(":")  # render:full:lead
+    if len(parts) == 3 and parts[0] == "render" and parts[1] in ("preview", "full") and parts[2].replace("_", "").isalnum():
+        f = d / "renders" / parts[1] / f"{parts[2]}_play.wav"
+        return f if f.exists() else d / "renders" / parts[1] / f"{parts[2]}.wav"
+    raise HTTPException(400, "bad audio source")
+
+
+@app.get("/api/projects/{pid}/play/{src}")
+def play(pid: str, src: str):
+    f = _audio_path(pid, src)
+    if not f.exists():
+        raise HTTPException(404, "No audio")
+    return FileResponse(f, media_type="audio/wav")
+
+
+@app.get("/api/projects/{pid}/peaks/{src}")
+def get_peaks(pid: str, src: str, n: int = 2000):
+    f = _audio_path(pid, src)
+    if not f.exists():
+        raise HTTPException(404, "No audio")
+    return service.peaks(f, int(np.clip(n, 100, 8000)))
 
 
 class LyricsIn(BaseModel):
@@ -290,6 +347,7 @@ class ExportIn(BaseModel):
     bwf_time_reference_s: float = 0.0
     midi: bool = True
     stems: list[str] | None = None
+    include_instrumental: bool = False
 
 
 @app.post("/api/projects/{pid}/export")
@@ -302,12 +360,12 @@ def export(pid: str, body: ExportIn):
 
 @app.get("/api/projects/{pid}/exports/{name}")
 def download_export(pid: str, name: str):
-    if "/" in name or ".." in name or not name.endswith(".zip"):
+    if "/" in name or ".." in name or not (name.endswith(".zip") or name.endswith(".wav")):
         raise HTTPException(400, "bad name")
     f = service.pdir(pid) / "exports" / name
     if not f.exists():
         raise HTTPException(404, "No export")
-    return FileResponse(f, media_type="application/zip", filename=name)
+    return FileResponse(f, media_type="application/zip" if name.endswith(".zip") else "audio/wav", filename=name)
 
 
 @app.get("/api/jobs/{job_id}")
